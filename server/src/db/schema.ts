@@ -1,0 +1,71 @@
+import { sql } from 'drizzle-orm'
+import { boolean, index, integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core'
+
+export const devices = pgTable('devices', {
+  name: text().primaryKey(),
+  platform: text({ enum: ['android', 'ios'] }).notNull(),
+  udid: text().notNull().unique(),
+  appiumUrl: text().notNull(),
+  systemPort: integer().notNull(),
+  host: text().notNull(),
+  enabled: boolean().notNull().default(true),
+})
+
+export const runs = pgTable('runs', {
+  id: serial().primaryKey(),
+  platform: text({ enum: ['android', 'ios'] }).notNull(),
+  appBuild: text().notNull(),
+  commit: text().notNull(),
+  trigger: text().notNull(),
+  status: text({ enum: ['running', 'passed', 'failed'] })
+    .notNull()
+    .default('running'),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp({ withTimezone: true }),
+})
+
+// One row per attempt of one scenario. A retry is a new row with attempt + 1.
+export const queue = pgTable(
+  'queue',
+  {
+    id: serial().primaryKey(),
+    runId: integer()
+      .notNull()
+      .references(() => runs.id),
+    scenarioId: text().notNull(),
+    attempt: integer().notNull().default(1),
+    status: text({ enum: ['pending', 'leased', 'done'] })
+      .notNull()
+      .default('pending'),
+    device: text().references(() => devices.name),
+    leaseUntil: timestamp({ withTimezone: true }),
+  },
+  (t) => [index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`)],
+)
+
+export const results = pgTable('results', {
+  id: serial().primaryKey(),
+  queueId: integer()
+    .notNull()
+    .unique()
+    .references(() => queue.id),
+  runId: integer()
+    .notNull()
+    .references(() => runs.id),
+  scenarioId: text().notNull(),
+  attempt: integer().notNull(),
+  device: text().references(() => devices.name),
+  status: text({ enum: ['passed', 'failed'] }).notNull(),
+  durationMs: integer().notNull(),
+  error: text(),
+  screenshot: text(), // file path under ARTIFACT_DIR
+  log: text(), // file path under ARTIFACT_DIR
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+})
+
+// Test account pool. An account is busy while the queue row it points to is leased.
+// Passwords are not stored here: the runner reads them from its env.
+export const accounts = pgTable('accounts', {
+  username: text().primaryKey(),
+  queueId: integer().references(() => queue.id),
+})

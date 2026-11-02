@@ -6,3 +6,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # browser drivers are not needed: we drive phones through Appium
+  edgedriver: false
+  geckodriver: false

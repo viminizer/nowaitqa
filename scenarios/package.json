@@ -1,0 +1,12 @@
+{
+  "name": "@nowait/scenarios",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "devDependencies": {
+    "webdriverio": "^10.1.0"
+  },
+  "dependencies": {
+    "@nowait/shared": "workspace:*"
+  }
+}
