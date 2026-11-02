@@ -33,3 +33,35 @@ Every request needs `Authorization: Bearer <API_TOKEN>`, except `GET /health`.
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
 back to the queue.
+
+## Runner
+
+Runs on the machine the phones are plugged into, next to Appium. One worker per phone: each takes
+the next scenario from the server, runs it, reports it, and repeats.
+
+```bash
+appium --port 4723                    # one Appium server for all phones (UiAutomator2 driver)
+cp runner/.env.example runner/.env    # then set API_TOKEN and HOST
+pnpm --filter @nowait/runner start
+```
+
+Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
+up new phones within a minute. The runner must be on the same git commit as the run.
+
+## Scenarios
+
+One file per scenario in `scenarios/`. The file name is the scenario id:
+
+```ts
+// scenarios/views.checkbox.ts
+export default {
+  id: 'views.checkbox',
+  platforms: ['android'],
+  async run(driver, account) {
+    // drive the app with WebdriverIO; wait for elements, never sleep
+  },
+} satisfies Scenario
+```
+
+Each scenario starts from a fresh app (data cleared). The samples test Appium's
+[ApiDemos](https://github.com/appium/android-apidemos) app.

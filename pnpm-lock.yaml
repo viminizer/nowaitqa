@@ -21,6 +21,21 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  runner:
+    dependencies:
+      '@nowait/scenarios':
+        specifier: workspace:*
+        version: link:../scenarios
+      '@nowait/shared':
+        specifier: workspace:*
+        version: link:../shared
+      webdriverio:
+        specifier: ^10.1.0
+        version: 10.1.0(supports-color@7.2.0)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   scenarios:
     dependencies:
       '@nowait/shared':
