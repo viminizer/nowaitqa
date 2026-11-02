@@ -78,3 +78,13 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 
 `POST /runs` takes the same options: `"split": "fixed" | "queue"` (default `queue`) and
 `"repeat": N` (put every scenario in the run N times).
+
+## Jenkins
+
+[`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
+the build. It starts a run for the new APK and, by default, waits for it and fails the build if
+the tests fail (`WAIT_FOR_RESULT`). It runs the scenarios from the latest nowait-qa `main`, so keep
+the runner on `main`.
+
+Jenkins needs a "Secret text" credential `nowait-api-token` with the server's `API_TOKEN`, and the
+test machine must be able to download the APK from Jenkins.

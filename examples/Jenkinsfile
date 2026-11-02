@@ -1,0 +1,67 @@
+// Example: run nowait-qa tests from an app's Jenkins pipeline.
+// Copy the 'Mobile tests' stage (and the parameter and environment lines it uses) into the app's
+// Jenkinsfile, after the stage that builds the APK.
+//
+// Needs in Jenkins:
+// - a "Secret text" credential with id 'nowait-api-token' holding the server's API_TOKEN
+// - curl and git on the agent
+pipeline {
+  agent any
+
+  parameters {
+    booleanParam(
+      name: 'WAIT_FOR_RESULT',
+      defaultValue: true,
+      description: 'Wait for the mobile tests and fail the build if they fail',
+    )
+  }
+
+  environment {
+    NOWAIT_URL = 'http://qa-server:3000' // the nowait-qa server
+    NOWAIT_REPO = 'https://github.com/viminizer/nowaitqa.git'
+    // Appium on the test machine downloads the APK from here, so the test machine must be able
+    // to reach this URL without logging in to Jenkins.
+    APK_URL = "${env.BUILD_URL}artifact/app/build/outputs/apk/debug/app-debug.apk"
+  }
+
+  stages {
+    stage('Build') {
+      steps {
+        sh './gradlew assembleDebug'
+        archiveArtifacts artifacts: 'app/build/outputs/apk/debug/app-debug.apk'
+      }
+    }
+
+    stage('Mobile tests') {
+      steps {
+        // Bounds the whole stage, including the wait.
+        timeout(time: 30, unit: 'MINUTES') {
+          withCredentials([string(credentialsId: 'nowait-api-token', variable: 'NOWAIT_TOKEN')]) {
+            sh '''
+              set -eu
+              # The scenarios to run: the latest nowait-qa main. The runner must be on it too.
+              COMMIT=$(git ls-remote "$NOWAIT_REPO" refs/heads/main | cut -f1)
+
+              RUN=$(curl -sf -X POST "$NOWAIT_URL/runs" \
+                -H "Authorization: Bearer $NOWAIT_TOKEN" -H "Content-Type: application/json" \
+                -d "{\\"platform\\":\\"android\\",\\"appBuild\\":\\"$APK_URL\\",\\"commit\\":\\"$COMMIT\\",\\"trigger\\":\\"jenkins $JOB_NAME #$BUILD_NUMBER\\"}")
+              RUN_ID=$(echo "$RUN" | sed 's/.*"id":\\([0-9]*\\).*/\\1/')
+              echo "nowait-qa run $RUN_ID started"
+              [ "$WAIT_FOR_RESULT" = true ] || exit 0
+
+              # The first "status" in the answer is the run's own status.
+              while true; do
+                STATUS=$(curl -sf -H "Authorization: Bearer $NOWAIT_TOKEN" "$NOWAIT_URL/runs/$RUN_ID" \
+                  | grep -o '"status":"[a-z]*"' | head -1 | cut -d'"' -f4)
+                [ "$STATUS" = running ] || break
+                sleep 30
+              done
+              echo "nowait-qa run $RUN_ID: $STATUS"
+              [ "$STATUS" = passed ]
+            '''
+          }
+        }
+      }
+    }
+  }
+}
