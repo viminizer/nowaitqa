@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx --env-file-if-exists=.env src/main.ts"
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
+    "benchmark": "tsx --env-file-if-exists=.env src/benchmark.ts"
   },
   "dependencies": {
     "@nowait/scenarios": "workspace:*",

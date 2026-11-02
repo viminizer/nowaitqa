@@ -20,6 +20,10 @@ export const CreateRunBody = z.object({
   appBuild: z.string().min(1), // URL or path of the APK / IPA
   commit: z.string().min(1), // git commit of the scenarios to run
   trigger: z.string().default('manual'),
+  // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
+  // (the old way, kept to compare against in the benchmark).
+  split: z.enum(['queue', 'fixed']).default('queue'),
+  repeat: z.number().int().min(1).max(20).default(1), // put every scenario in the run N times
 })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
@@ -56,9 +60,20 @@ export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
 export const RunSummary = z.object({
   id: z.number().int(),
   platform: Platform,
+  split: z.enum(['queue', 'fixed']),
   status: z.enum(['running', 'passed', 'failed']),
-  createdAt: z.date(),
-  finishedAt: z.date().nullable(),
+  createdAt: z.coerce.date(),
+  finishedAt: z.coerce.date().nullable(),
+  durationMs: z.number().int().nullable(), // created -> finished
   scenarios: z.array(z.object({ id: z.string(), status: ScenarioStatus })),
+  // Per phone: busy = holding a lease (install, reset, run). idle = the rest of the run.
+  devices: z.array(
+    z.object({
+      name: z.string(),
+      attempts: z.number().int(),
+      busyMs: z.number().int(),
+      idleMs: z.number().int().nullable(),
+    }),
+  ),
 })
 export type RunSummary = z.infer<typeof RunSummary>

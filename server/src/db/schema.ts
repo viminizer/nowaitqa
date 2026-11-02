@@ -17,6 +17,9 @@ export const runs = pgTable('runs', {
   appBuild: text().notNull(),
   commit: text().notNull(),
   trigger: text().notNull(),
+  split: text({ enum: ['queue', 'fixed'] })
+    .notNull()
+    .default('queue'),
   status: text({ enum: ['running', 'passed', 'failed'] })
     .notNull()
     .default('running'),
@@ -24,7 +27,7 @@ export const runs = pgTable('runs', {
   finishedAt: timestamp({ withTimezone: true }),
 })
 
-// One row per attempt of one scenario. A retry is a new row with attempt + 1.
+// One row per attempt of one scenario. A retry is a new row with attempt + 1 and the same slot.
 export const queue = pgTable(
   'queue',
   {
@@ -32,12 +35,15 @@ export const queue = pgTable(
     runId: integer()
       .notNull()
       .references(() => runs.id),
+    slot: integer().notNull().default(0), // which item of the run this is (a scenario can repeat)
     scenarioId: text().notNull(),
     attempt: integer().notNull().default(1),
     status: text({ enum: ['pending', 'leased', 'done'] })
       .notNull()
       .default('pending'),
-    device: text().references(() => devices.name),
+    assignedDevice: text().references(() => devices.name), // set only when split = fixed
+    device: text().references(() => devices.name), // the phone holding (or that held) the lease
+    leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
   },
   (t) => [index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`)],

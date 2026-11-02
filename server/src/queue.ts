@@ -2,7 +2,7 @@
 
 import { loadScenarios } from '@nowait/scenarios'
 import type { CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
-import { and, asc, eq, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
@@ -37,36 +37,74 @@ export function waitForWork(ms: number) {
 
 // --- runs ------------------------------------------------------------------------------------
 
+export class BadRunError extends Error {}
+
 export async function createRun(body: CreateRunBody) {
   const scenarioIds = (await loadScenarios())
     .filter((s) => s.platforms.includes(body.platform))
     .map((s) => s.id)
-  if (scenarioIds.length === 0) return null
+  if (scenarioIds.length === 0) throw new BadRunError(`no scenarios for ${body.platform}`)
+  const items = Array.from({ length: body.repeat }, () => scenarioIds).flat()
+
+  // fixed: deal the items out to the phones up front, round robin, like the old framework.
+  const phones =
+    body.split === 'fixed'
+      ? (
+          await db
+            .select({ name: devices.name })
+            .from(devices)
+            .where(and(eq(devices.platform, body.platform), eq(devices.enabled, true)))
+            .orderBy(asc(devices.name))
+        ).map((d) => d.name)
+      : []
+  if (body.split === 'fixed' && phones.length === 0) {
+    throw new BadRunError(`no enabled ${body.platform} phones to split the run across`)
+  }
 
   const runId = await db.transaction(async (tx) => {
     const [run] = await tx.insert(runs).values(body).returning({ id: runs.id })
     if (!run) throw new Error('run insert returned nothing')
-    await tx.insert(queue).values(scenarioIds.map((scenarioId) => ({ runId: run.id, scenarioId })))
+    await tx.insert(queue).values(
+      items.map((scenarioId, slot) => ({
+        runId: run.id,
+        slot,
+        scenarioId,
+        assignedDevice: phones[slot % phones.length],
+      })),
+    )
     return run.id
   })
   notifyWork()
   return runId
 }
 
+type ScenarioStatus = RunSummary['scenarios'][number]['status']
+
 export async function getRun(id: number): Promise<RunSummary | null> {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, id) })
   if (!run) return null
 
   const attempts = await db
-    .select({ scenarioId: queue.scenarioId, attempt: queue.attempt, result: results.status })
+    .select({
+      slot: queue.slot,
+      scenarioId: queue.scenarioId,
+      attempt: queue.attempt,
+      device: queue.device,
+      leasedAt: queue.leasedAt,
+      result: results.status,
+      resultAt: results.createdAt,
+    })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, id))
     .orderBy(asc(queue.id))
 
-  const byScenario = new Map<string, RunSummary['scenarios'][number]['status']>()
+  const durationMs = run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
+  const bySlot = new Map<number, { id: string; status: ScenarioStatus }>()
+  const byDevice = new Map<string, { attempts: number; busyMs: number }>()
+
   for (const a of attempts) {
-    const status =
+    const status: ScenarioStatus =
       a.result === 'passed'
         ? a.attempt === 1
           ? 'passed'
@@ -74,13 +112,25 @@ export async function getRun(id: number): Promise<RunSummary | null> {
         : a.result === 'failed' && a.attempt >= config.MAX_ATTEMPTS
           ? 'failed'
           : 'pending'
-    // attempts are in order, so the latest attempt decides
-    byScenario.set(a.scenarioId, status)
+    bySlot.set(a.slot, { id: a.scenarioId, status }) // attempts are in order: the latest decides
+
+    if (a.device && a.leasedAt && a.resultAt) {
+      const stats = byDevice.get(a.device) ?? { attempts: 0, busyMs: 0 }
+      stats.attempts++
+      stats.busyMs += a.resultAt.getTime() - a.leasedAt.getTime()
+      byDevice.set(a.device, stats)
+    }
   }
 
   return {
     ...run,
-    scenarios: [...byScenario].map(([scenarioId, status]) => ({ id: scenarioId, status })),
+    durationMs,
+    scenarios: [...bySlot.values()],
+    devices: [...byDevice].map(([name, s]) => ({
+      name,
+      ...s,
+      idleMs: durationMs === null ? null : durationMs - s.busyMs,
+    })),
   }
 }
 
@@ -100,7 +150,13 @@ export async function leaseNext(deviceName: string): Promise<Lease | null> {
       .select({ id: queue.id, run: runs })
       .from(queue)
       .innerJoin(runs, eq(runs.id, queue.runId))
-      .where(and(eq(queue.status, 'pending'), eq(runs.platform, device.platform)))
+      .where(
+        and(
+          eq(queue.status, 'pending'),
+          eq(runs.platform, device.platform),
+          or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
+        ),
+      )
       .orderBy(asc(queue.runId), asc(queue.id))
       .limit(1)
       .for('update', { of: queue, skipLocked: true })
@@ -114,6 +170,7 @@ export async function leaseNext(deviceName: string): Promise<Lease | null> {
       .set({
         status: 'leased',
         device: device.name,
+        leasedAt: sql`now()`,
         leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})`,
       })
       .where(eq(queue.id, row.id))
@@ -226,9 +283,14 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
   })
 
   if (outcome.status === 'failed' && row.attempt < config.MAX_ATTEMPTS) {
-    await tx
-      .insert(queue)
-      .values({ runId: row.runId, scenarioId: row.scenarioId, attempt: row.attempt + 1 })
+    // Same slot. In a fixed split the retry stays on the same phone, like the old framework.
+    await tx.insert(queue).values({
+      runId: row.runId,
+      slot: row.slot,
+      scenarioId: row.scenarioId,
+      attempt: row.attempt + 1,
+      assignedDevice: row.assignedDevice,
+    })
     return true
   }
 
@@ -245,12 +307,13 @@ async function finishRunIfDone(tx: Tx, runId: number) {
   )
   if (open.rows.length > 0) return
 
+  // Failed = some slot has no passing attempt.
   const failed = await tx.execute(sql`
     SELECT 1 FROM ${queue} q
     WHERE q.run_id = ${runId}
       AND NOT EXISTS (
-        SELECT 1 FROM ${results} r
-        WHERE r.run_id = ${runId} AND r.scenario_id = q.scenario_id AND r.status = 'passed')
+        SELECT 1 FROM ${queue} q2 JOIN ${results} r ON r.queue_id = q2.id
+        WHERE q2.run_id = ${runId} AND q2.slot = q.slot AND r.status = 'passed')
     LIMIT 1`)
   await tx
     .update(runs)

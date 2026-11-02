@@ -1,5 +1,5 @@
 // The runner's only way to reach the outside world: the server's HTTP API (R4).
-import { Device, Lease, type ResultBody } from '@nowait/shared'
+import { type CreateRunBody, Device, Lease, type ResultBody, RunSummary } from '@nowait/shared'
 import { z } from 'zod'
 import { config } from './config.ts'
 
@@ -19,6 +19,16 @@ async function call(method: 'GET' | 'POST', path: string, expected: number[], bo
 export async function getDevices() {
   const res = await call('GET', `/devices?host=${encodeURIComponent(config.HOST)}`, [200])
   return z.array(Device).parse(await res.json())
+}
+
+export async function createRun(body: z.input<typeof CreateRunBody>) {
+  const res = await call('POST', '/runs', [201], body)
+  return z.object({ id: z.number().int() }).parse(await res.json()).id
+}
+
+export async function getRun(id: number) {
+  const res = await call('GET', `/runs/${id}`, [200])
+  return RunSummary.parse(await res.json())
 }
 
 export class DeviceGoneError extends Error {}

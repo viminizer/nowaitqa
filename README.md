@@ -65,3 +65,16 @@ export default {
 
 Each scenario starts from a fresh app (data cleared). The samples test Appium's
 [ApiDemos](https://github.com/appium/android-apidemos) app.
+
+## Benchmark
+
+Runs the same scenarios twice - each phone with a fixed list (the old way), then the shared
+queue - and prints the total time and how long each phone was busy or idle. The runner must be
+running.
+
+```bash
+pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
+```
+
+`POST /runs` takes the same options: `"split": "fixed" | "queue"` (default `queue`) and
+`"repeat": N` (put every scenario in the run N times).
