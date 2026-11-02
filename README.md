@@ -49,6 +49,9 @@ cp runner/.env.example runner/.env    # then set RUNNER_TOKEN and HOST
 pnpm --filter @nowait/runner start
 ```
 
+Appium 3 needs the UiAutomator2 driver 8.x (tested with
+`appium driver install uiautomator2@8.7.3`). Driver 9.x needs Appium 4.
+
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute. The runner must be on the same git commit as the run.
 
@@ -92,3 +95,10 @@ It runs the scenarios from the latest nowait-qa `main`, so keep the runner on `m
 
 Jenkins needs a "Secret text" credential `nowait-trigger-token` with the server's `TRIGGER_TOKEN`,
 and the test machine must be able to download the APK from Jenkins.
+
+## Real deployment
+
+- Put the server behind HTTPS (a reverse proxy like Caddy or nginx). The server speaks plain HTTP,
+  so without it the tokens travel unencrypted.
+- `appBuild` can be any URL or path, and the phones install it. Only give the trigger token to
+  trusted callers.
