@@ -2,7 +2,7 @@
 
 import { loadScenarios } from '@nowait/scenarios'
 import type { CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
-import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
@@ -109,7 +109,8 @@ export async function getRun(id: number): Promise<RunSummary | null> {
         ? a.attempt === 1
           ? 'passed'
           : 'flaky'
-        : a.result === 'failed' && a.attempt >= config.MAX_ATTEMPTS
+        : // a finished run has no retry coming (it may have been stuck before one)
+          a.result === 'failed' && (a.attempt >= config.MAX_ATTEMPTS || run.status !== 'running')
           ? 'failed'
           : 'pending'
     bySlot.set(a.slot, { id: a.scenarioId, status }) // attempts are in order: the latest decides
@@ -138,14 +139,15 @@ export async function getRun(id: number): Promise<RunSummary | null> {
 
 export class UnknownDeviceError extends Error {}
 
-export async function leaseNext(deviceName: string): Promise<Lease | null> {
+export async function leaseNext(deviceName: string, currentRunId = 0): Promise<Lease | null> {
   return db.transaction(async (tx) => {
     const device = await tx.query.devices.findFirst({
       where: and(eq(devices.name, deviceName), eq(devices.enabled, true)),
     })
     if (!device) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
 
-    // Oldest run first. SKIP LOCKED: if another phone is taking a row right now, take the next one.
+    // The phone's current run first (a new run means a new session and app install), then the
+    // oldest run. SKIP LOCKED: if another phone is taking a row right now, take the next one.
     const [row] = await tx
       .select({ id: queue.id, run: runs })
       .from(queue)
@@ -157,7 +159,7 @@ export async function leaseNext(deviceName: string): Promise<Lease | null> {
           or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
         ),
       )
-      .orderBy(asc(queue.runId), asc(queue.id))
+      .orderBy(desc(sql`${queue.runId} = ${currentRunId}`), asc(queue.runId), asc(queue.id))
       .limit(1)
       .for('update', { of: queue, skipLocked: true })
     if (!row) return null
@@ -220,7 +222,7 @@ export async function heartbeat(queueId: number, device: string) {
 
 // Returns false when the lease is no longer this device's (it expired and the scenario moved on).
 export async function submitResult(body: ResultBody) {
-  const retried = await db.transaction(async (tx) => {
+  const saved = await db.transaction(async (tx) => {
     const [row] = await tx
       .update(queue)
       .set({ status: 'done' })
@@ -228,10 +230,11 @@ export async function submitResult(body: ResultBody) {
         and(eq(queue.id, body.queueId), eq(queue.device, body.device), eq(queue.status, 'leased')),
       )
       .returning()
-    if (!row) return null
+    if (!row) return false
 
-    const name = `${row.scenarioId}-${row.attempt}`
-    return recordAttempt(tx, row, {
+    // The slot keeps names apart when a scenario repeats in one run.
+    const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
+    await recordAttempt(tx, row, {
       status: body.status,
       durationMs: body.durationMs,
       error: body.error,
@@ -240,29 +243,57 @@ export async function submitResult(body: ResultBody) {
         (await saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64'))),
       log: body.log && (await saveArtifact(row.runId, `${name}.log`, body.log)),
     })
+    return true
   })
-  if (retried === null) return false
-  if (retried) notifyWork()
-  return true
+  // A finished attempt frees its account and may have queued a retry: waiting phones look again.
+  if (saved) notifyWork()
+  return saved
 }
 
 // A lease that ran out means the worker died: count it as a failed attempt.
 export async function expireLeases() {
-  const retried = await db.transaction(async (tx) => {
-    const expired = await tx
+  const expired = await db.transaction(async (tx) => {
+    const rows = await tx
       .update(queue)
       .set({ status: 'done' })
       .where(and(eq(queue.status, 'leased'), lt(queue.leaseUntil, sql`now()`)))
       .returning()
-    let anyRetried = false
-    for (const row of expired) {
+    for (const row of rows) {
       const error = `lease expired: lost contact with device ${row.device}`
-      anyRetried =
-        (await recordAttempt(tx, row, { status: 'failed', durationMs: 0, error })) || anyRetried
+      await recordAttempt(tx, row, { status: 'failed', durationMs: 0, error })
     }
-    return anyRetried
+    return rows.length
   })
-  if (retried) notifyWork()
+  if (expired > 0) notifyWork()
+}
+
+// A run is stuck when no phone of its platform has taken or finished any work for
+// STUCK_RUN_MINUTES (no phone connected, or a fixed split's phone is gone). It fails with its
+// open items, so nobody waits forever. Slow runs, and runs waiting behind others, keep going.
+// ponytail: scans the queue's history every minute; add an index on leased_at if it gets slow.
+export async function expireRuns() {
+  await db.transaction(async (tx) => {
+    const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
+    const stuck = await tx.execute<{ id: number; platform: string }>(sql`
+      SELECT r.id, r.platform FROM ${runs} r
+      WHERE r.status = 'running' AND r.created_at < ${cutoff}
+        AND NOT EXISTS (
+          SELECT 1 FROM ${queue} q
+          JOIN ${runs} r2 ON r2.id = q.run_id
+          LEFT JOIN ${results} res ON res.queue_id = q.id
+          WHERE r2.platform = r.platform
+            AND (q.status = 'leased' OR q.leased_at > ${cutoff} OR res.created_at > ${cutoff}))`)
+    for (const run of stuck.rows) {
+      const open = await tx
+        .update(queue)
+        .set({ status: 'done' })
+        .where(and(eq(queue.runId, run.id), ne(queue.status, 'done')))
+        .returning()
+      const error = `stuck: no ${run.platform} phone took or finished any work for ${config.STUCK_RUN_MINUTES} minutes`
+      for (const row of open) await saveResult(tx, row, { status: 'failed', durationMs: 0, error })
+      await finishRunIfDone(tx, run.id)
+    }
+  })
 }
 
 type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {
@@ -270,10 +301,8 @@ type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {
   log?: string
 }
 
-// Saves the result of a finished attempt, queues a retry if allowed, and closes the run when
-// nothing is left. Returns true when a retry was queued.
-async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
-  await tx.insert(results).values({
+function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
+  return tx.insert(results).values({
     queueId: row.id,
     runId: row.runId,
     scenarioId: row.scenarioId,
@@ -281,21 +310,25 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
     device: row.device,
     ...outcome,
   })
+}
+
+// Saves the result of a finished attempt, queues a retry if allowed, and closes the run when
+// nothing is left.
+async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
+  await saveResult(tx, row, outcome)
 
   if (outcome.status === 'failed' && row.attempt < config.MAX_ATTEMPTS) {
-    // Same slot. In a fixed split the retry stays on the same phone, like the old framework.
+    // Same slot, any phone: in a fixed split the assigned phone may be the problem.
     await tx.insert(queue).values({
       runId: row.runId,
       slot: row.slot,
       scenarioId: row.scenarioId,
       attempt: row.attempt + 1,
-      assignedDevice: row.assignedDevice,
     })
-    return true
+    return
   }
 
   await finishRunIfDone(tx, row.runId)
-  return false
 }
 
 async function finishRunIfDone(tx: Tx, runId: number) {

@@ -19,10 +19,11 @@ export async function runWorker(device: Device) {
     let current: Lease | null = null
     let stopHeartbeat = () => {}
     try {
-      current = await lease(device.name)
+      current = await lease(device.name, session?.runId)
       if (!current) continue
       // From the moment we hold the lease: a first app install can take minutes.
-      stopHeartbeat = keepLeaseAlive(device, current)
+      // If the lease is gone, ending the Appium session stops the scenario at its next command.
+      stopHeartbeat = keepLeaseAlive(device, current, () => closeSession(device, session))
 
       // One session per phone for the whole run. A new run brings a new app build.
       if (session?.runId === current.runId) {
@@ -58,12 +59,18 @@ export async function runWorker(device: Device) {
   }
 }
 
-// Tells the server "still working" four times per lease period. Returns the stop function.
-function keepLeaseAlive(device: Device, current: Lease) {
+// Tells the server "still working" four times per lease period, and calls onGone once if the
+// lease is gone (it expired, or the run was stuck and closed). Returns the stop function.
+function keepLeaseAlive(device: Device, current: Lease, onGone: () => Promise<void>) {
   const timer = setInterval(
     () => {
       heartbeat(current.queueId, device.name)
-        .then((alive) => alive || log(device.name, `lease ${current.queueId} is gone`))
+        .then(async (alive) => {
+          if (alive) return
+          clearInterval(timer)
+          log(device.name, `lease ${current.queueId} is gone: stopping the scenario`)
+          await onGone()
+        })
         .catch((err) => log(device.name, 'heartbeat failed', err))
     },
     (current.leaseSeconds * 1000) / 4,

@@ -6,6 +6,7 @@ const Env = z.object({
   API_TOKEN: z.string().min(16), // shared by the runner and Jenkins: Authorization: Bearer <token>
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
+  STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
   MAX_ATTEMPTS: z.coerce.number().int().positive().default(2), // 1 run + 1 retry
   ARTIFACT_DIR: z.string().default('artifacts'),
   ARTIFACT_DAYS: z.coerce.number().int().positive().default(30),

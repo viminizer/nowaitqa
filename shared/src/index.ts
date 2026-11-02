@@ -27,7 +27,9 @@ export const CreateRunBody = z.object({
 })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
-export const LeaseBody = z.object({ device: z.string().min(1) })
+// runId: the run the phone has a session for. That run's work comes first, so the phone does not
+// switch apps back and forth between runs.
+export const LeaseBody = z.object({ device: z.string().min(1), runId: z.number().int().optional() })
 
 export const Lease = z.object({
   queueId: z.number().int(),

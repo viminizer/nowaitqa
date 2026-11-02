@@ -32,7 +32,8 @@ Every request needs `Authorization: Bearer <API_TOKEN>`, except `GET /health`.
 | `POST /results`      | runner       | Report pass or fail, with a screenshot and a log                   |
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
-back to the queue.
+back to the queue. A run is stuck when no phone of its platform has taken or finished any work for
+`STUCK_RUN_MINUTES` (default 15), for example when no phone is connected. A stuck run fails.
 
 ## Runner
 
@@ -83,8 +84,8 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
 the build. It starts a run for the new APK and, by default, waits for it and fails the build if
-the tests fail (`WAIT_FOR_RESULT`). It runs the scenarios from the latest nowait-qa `main`, so keep
-the runner on `main`.
+the tests fail (`WAIT_FOR_RESULT`). Its timeout (90 minutes) must be longer than your slowest run.
+It runs the scenarios from the latest nowait-qa `main`, so keep the runner on `main`.
 
 Jenkins needs a "Secret text" credential `nowait-api-token` with the server's `API_TOKEN`, and the
 test machine must be able to download the APK from Jenkins.
