@@ -2,7 +2,8 @@ packages:
   - shared
   - server
   - runner
-  - scenarios
+  - sdk
+  - examples/scenarios
 
 allowBuilds:
   esbuild: true

@@ -7,7 +7,7 @@
     "benchmark": "tsx src/benchmark.ts"
   },
   "dependencies": {
-    "@nowait/scenarios": "workspace:*",
+    "@nowait-qa/sdk": "workspace:*",
     "@nowait/shared": "workspace:*",
     "webdriverio": "^10.1.0",
     "zod": "^4.6.7"

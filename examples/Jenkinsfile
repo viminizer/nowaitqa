@@ -18,7 +18,7 @@ pipeline {
 
   environment {
     NOWAIT_URL = 'http://qa-server:3000' // the nowait-qa server
-    NOWAIT_REPO = 'https://github.com/viminizer/nowaitqa.git'
+    SCENARIOS_REPO = 'https://github.com/viminizer/nowaitqa.git' // the repo with your scenarios
     // Appium on the test machine downloads the APK from here, so the test machine must be able
     // to reach this URL without logging in to Jenkins.
     APK_URL = "${env.BUILD_URL}artifact/app/build/outputs/apk/debug/app-debug.apk"
@@ -40,8 +40,8 @@ pipeline {
           withCredentials([string(credentialsId: 'nowait-trigger-token', variable: 'NOWAIT_TOKEN')]) {
             sh '''
               set -eu
-              # The scenarios to run: the latest nowait-qa main. The runner must be on it too.
-              COMMIT=$(git ls-remote "$NOWAIT_REPO" refs/heads/main | cut -f1)
+              # The scenarios to run: the latest main of the scenarios repo. The runner must be on it too.
+              COMMIT=$(git ls-remote "$SCENARIOS_REPO" refs/heads/main | cut -f1)
 
               RUN=$(curl -sf -X POST "$NOWAIT_URL/runs" \
                 -H "Authorization: Bearer $NOWAIT_TOKEN" -H "Content-Type: application/json" \

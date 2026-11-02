@@ -1,13 +1,16 @@
 // Runs one leased scenario on one phone and turns the outcome into a result for the server.
 import { execFileSync } from 'node:child_process'
-import { loadScenarios } from '@nowait/scenarios'
 import type { Device, Lease, ResultBody } from '@nowait/shared'
+import { loadScenarios } from '@nowait-qa/sdk'
 import type { Browser } from 'webdriverio'
 import { config } from './config.ts'
 import { log } from './log.ts'
 
-const scenarios = new Map((await loadScenarios()).map((s) => [s.id, s]))
-const head = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim()
+// The scenarios and their git commit are read once at startup: restart the runner after a pull.
+const scenarios = new Map((await loadScenarios(config.SCENARIOS_DIR)).map((s) => [s.id, s]))
+const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: config.SCENARIOS_DIR })
+  .toString()
+  .trim()
 
 export async function runScenario(
   driver: Browser,

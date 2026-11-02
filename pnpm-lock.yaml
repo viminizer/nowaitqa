@@ -21,11 +21,20 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  examples/scenarios:
+    devDependencies:
+      '@nowait-qa/sdk':
+        specifier: workspace:*
+        version: link:../../sdk
+      webdriverio:
+        specifier: ^10.1.0
+        version: 10.1.0(supports-color@7.2.0)
+
   runner:
     dependencies:
-      '@nowait/scenarios':
+      '@nowait-qa/sdk':
         specifier: workspace:*
-        version: link:../scenarios
+        version: link:../sdk
       '@nowait/shared':
         specifier: workspace:*
         version: link:../shared
@@ -36,11 +45,7 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
-  scenarios:
-    dependencies:
-      '@nowait/shared':
-        specifier: workspace:*
-        version: link:../shared
+  sdk:
     devDependencies:
       webdriverio:
         specifier: ^10.1.0
@@ -48,9 +53,9 @@ importers:
 
   server:
     dependencies:
-      '@nowait/scenarios':
+      '@nowait-qa/sdk':
         specifier: workspace:*
-        version: link:../scenarios
+        version: link:../sdk
       '@nowait/shared':
         specifier: workspace:*
         version: link:../shared

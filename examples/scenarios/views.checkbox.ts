@@ -1,5 +1,5 @@
+import type { Scenario } from '@nowait-qa/sdk'
 import { byId, open, tap } from './helpers/android.ts'
-import type { Scenario } from './index.ts'
 
 export default {
   id: 'views.checkbox',

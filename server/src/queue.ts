@@ -1,7 +1,7 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
-import { loadScenarios } from '@nowait/scenarios'
 import type { CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
+import { loadScenarios } from '@nowait-qa/sdk'
 import { and, asc, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
@@ -40,7 +40,7 @@ export function waitForWork(ms: number) {
 export class BadRunError extends Error {}
 
 export async function createRun(body: CreateRunBody) {
-  const scenarioIds = (await loadScenarios())
+  const scenarioIds = (await loadScenarios(config.SCENARIOS_DIR))
     .filter((s) => s.platforms.includes(body.platform))
     .map((s) => s.id)
   if (scenarioIds.length === 0) throw new BadRunError(`no scenarios for ${body.platform}`)

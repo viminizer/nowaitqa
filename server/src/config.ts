@@ -7,6 +7,9 @@ const Env = z.object({
   // (Jenkins) can only start runs and read them.
   RUNNER_TOKEN: z.string().min(16),
   TRIGGER_TOKEN: z.string().min(16),
+  // ponytail: the server reads the scenario list from the same folder as the runner. The next
+  // step drops this: the runner will send its list to the server.
+  SCENARIOS_DIR: z.string().min(1),
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()

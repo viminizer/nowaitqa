@@ -20,6 +20,7 @@ there have that default. Set at least the database and the two tokens:
 ```bash
 export DATABASE_URL=postgres://nowait:nowait@localhost:5432/nowait
 export RUNNER_TOKEN=<random, 16+ characters> TRIGGER_TOKEN=<another one>
+export SCENARIOS_DIR=../examples/scenarios   # relative to server/
 pnpm --filter @nowait/server dev
 ```
 
@@ -52,6 +53,7 @@ Settings are listed in `runner/env.example`:
 ```bash
 appium --port 4723   # one Appium server for all phones (UiAutomator2 driver)
 export SERVER_URL=http://localhost:3000 RUNNER_TOKEN=<the server's RUNNER_TOKEN> HOST=macmini-1
+export SCENARIOS_DIR=../examples/scenarios   # relative to runner/
 pnpm --filter @nowait/runner start
 ```
 
@@ -59,14 +61,21 @@ Appium 3 needs the UiAutomator2 driver 8.x (tested with
 `appium driver install uiautomator2@8.7.3`). Driver 9.x needs Appium 4.
 
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
-up new phones within a minute. The runner must be on the same git commit as the run.
+up new phones within a minute.
 
 ## Scenarios
 
-One file per scenario in `scenarios/`. The file name is the scenario id:
+Scenarios live in your own folder or repo, not in nowait-qa. Point `SCENARIOS_DIR` (runner and
+server) at it. The folder must be inside a git checkout: a run names a commit, and the runner
+refuses to run a scenario from a different one.
+
+One file per scenario, directly in the folder. The file name is the scenario id. Sub-folders
+(helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`:
 
 ```ts
-// scenarios/views.checkbox.ts
+// views.checkbox.ts
+import type { Scenario } from '@nowait-qa/sdk'
+
 export default {
   id: 'views.checkbox',
   platforms: ['android'],
@@ -76,7 +85,10 @@ export default {
 } satisfies Scenario
 ```
 
-Each scenario starts from a fresh app (data cleared). The samples test Appium's
+Each scenario starts from a fresh app (data cleared). The runner reads the folder at startup, so
+restart it after you change the scenarios.
+
+[`examples/scenarios/`](examples/scenarios) is a sample folder to copy. It tests Appium's
 [ApiDemos](https://github.com/appium/android-apidemos) app.
 
 ## Benchmark
@@ -97,7 +109,8 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
 the build. It starts a run for the new APK and, by default, waits for it and fails the build if
 the tests fail (`WAIT_FOR_RESULT`). Its timeout (90 minutes) must be longer than your slowest run.
-It runs the scenarios from the latest nowait-qa `main`, so keep the runner on `main`.
+It runs the scenarios from the latest `main` of your scenarios repo (`SCENARIOS_REPO`), so keep the
+runner's `SCENARIOS_DIR` on `main`.
 
 Jenkins needs a "Secret text" credential `nowait-trigger-token` with the server's `TRIGGER_TOKEN`,
 and the test machine must be able to download the APK from Jenkins.

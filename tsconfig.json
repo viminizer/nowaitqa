@@ -9,6 +9,13 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["shared/src", "server/src", "server/drizzle.config.ts", "runner/src", "scenarios"],
+  "include": [
+    "shared/src",
+    "server/src",
+    "server/drizzle.config.ts",
+    "runner/src",
+    "sdk",
+    "examples/scenarios"
+  ],
   "exclude": ["**/node_modules"]
 }

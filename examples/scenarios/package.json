@@ -1,0 +1,9 @@
+{
+  "name": "nowait-qa-example-scenarios",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@nowait-qa/sdk": "workspace:*",
+    "webdriverio": "^10.1.0"
+  }
+}

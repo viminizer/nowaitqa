@@ -1,0 +1,11 @@
+{
+  "name": "@nowait-qa/sdk",
+  "type": "module",
+  "exports": "./index.ts",
+  "peerDependencies": {
+    "webdriverio": "^10.1.0"
+  },
+  "devDependencies": {
+    "webdriverio": "^10.1.0"
+  }
+}
