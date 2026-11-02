@@ -1,7 +1,7 @@
 // Starts one worker per enabled phone on this machine, and picks up new phones every minute.
 import { getDevices } from './api.ts'
 import { config } from './config.ts'
-import { log } from './scenario.ts'
+import { log } from './log.ts'
 import { runWorker } from './worker.ts'
 
 const running = new Set<string>()

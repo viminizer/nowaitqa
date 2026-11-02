@@ -2,7 +2,8 @@
 import type { Device, Lease } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { DeviceGoneError, heartbeat, lease, sendResult } from './api.ts'
-import { log, runScenario } from './scenario.ts'
+import { log } from './log.ts'
+import { runScenario } from './scenario.ts'
 
 type Session = { driver: Browser; runId: number; appId: string }
 

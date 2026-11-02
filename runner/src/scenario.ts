@@ -4,13 +4,10 @@ import { loadScenarios } from '@nowait/scenarios'
 import type { Device, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
 import { config } from './config.ts'
+import { log } from './log.ts'
 
 const scenarios = new Map((await loadScenarios()).map((s) => [s.id, s]))
 const head = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim()
-
-export function log(device: string, message: string, err?: unknown) {
-  console.log(`[${new Date().toISOString()}] [${device}] ${message}`, err ?? '')
-}
 
 export async function runScenario(
   driver: Browser,
