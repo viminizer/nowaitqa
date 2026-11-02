@@ -1,4 +1,5 @@
 // The only place the server reads env (R10). Stops at startup if a value is missing or wrong.
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 const Env = z.object({
@@ -9,7 +10,10 @@ const Env = z.object({
   TRIGGER_TOKEN: z.string().min(16),
   // ponytail: the server reads the scenario list from the same folder as the runner. The next
   // step drops this: the runner will send its list to the server.
-  SCENARIOS_DIR: z.string().min(1),
+  SCENARIOS_DIR: z
+    .string()
+    .min(1)
+    .default(fileURLToPath(new URL('../../examples/scenarios', import.meta.url))),
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()

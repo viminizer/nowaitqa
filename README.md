@@ -20,7 +20,6 @@ there have that default. Set at least the database and the two tokens:
 ```bash
 export DATABASE_URL=postgres://nowait:nowait@localhost:5432/nowait
 export RUNNER_TOKEN=<random, 16+ characters> TRIGGER_TOKEN=<another one>
-export SCENARIOS_DIR=../examples/scenarios   # relative to server/
 pnpm --filter @nowait/server dev
 ```
 
@@ -53,7 +52,6 @@ Settings are listed in `runner/env.example`:
 ```bash
 appium --port 4723   # one Appium server for all phones (UiAutomator2 driver)
 export SERVER_URL=http://localhost:3000 RUNNER_TOKEN=<the server's RUNNER_TOKEN> HOST=macmini-1
-export SCENARIOS_DIR=../examples/scenarios   # relative to runner/
 pnpm --filter @nowait/runner start
 ```
 
@@ -66,11 +64,18 @@ up new phones within a minute.
 ## Scenarios
 
 Scenarios live in your own folder or repo, not in nowait-qa. Point `SCENARIOS_DIR` (runner and
-server) at it. The folder must be inside a git checkout: a run names a commit, and the runner
+server) at it. Without it, both use the samples in `examples/scenarios/`. Use an absolute path: a
+relative one is read from the folder the process starts in (`server/` or `runner/` with
+`pnpm --filter`). The folder must be inside a git checkout: a run names a commit, and the runner
 refuses to run a scenario from a different one.
 
 One file per scenario, directly in the folder. The file name is the scenario id. Sub-folders
-(helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`:
+(helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`, installed from GitHub
+(it is not on npm). It needs pnpm, because npm cannot install a package from a sub-folder of a repo:
+
+```bash
+pnpm add -D "github:viminizer/nowaitqa#path:/sdk" webdriverio
+```
 
 ```ts
 // views.checkbox.ts
@@ -89,7 +94,9 @@ Each scenario starts from a fresh app (data cleared). The runner reads the folde
 restart it after you change the scenarios.
 
 [`examples/scenarios/`](examples/scenarios) is a sample folder to copy. It tests Appium's
-[ApiDemos](https://github.com/appium/android-apidemos) app.
+[ApiDemos](https://github.com/appium/android-apidemos) app. After copying, delete the
+`@nowait-qa/sdk` line from its `package.json` (it points inside this repo), then run the install
+command above.
 
 ## Benchmark
 
