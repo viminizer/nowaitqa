@@ -13,13 +13,22 @@ const app = Fastify({ logger: true, bodyLimit: 20 * 1024 * 1024 }) // results ca
 app.setValidatorCompiler(validatorCompiler)
 app.setSerializerCompiler(serializerCompiler)
 
-// Every route except /health needs the shared token (R22).
-const token = Buffer.from(`Bearer ${config.API_TOKEN}`)
+// Every route except /health needs a token (R22). A leaked trigger token (Jenkins) can start
+// runs, but cannot take work or report fake results.
+const TRIGGER_ROUTES = ['/runs', '/runs/:id']
+const isToken = (given: Buffer, token: string) => {
+  const expected = Buffer.from(`Bearer ${token}`)
+  return given.length === expected.length && timingSafeEqual(given, expected)
+}
 app.addHook('onRequest', async (req, reply) => {
   if (req.url === '/health') return
   const given = Buffer.from(req.headers.authorization ?? '')
-  if (given.length !== token.length || !timingSafeEqual(given, token)) {
+  if (isToken(given, config.RUNNER_TOKEN)) return
+  if (!isToken(given, config.TRIGGER_TOKEN)) {
     return reply.code(401).send({ error: 'unauthorized' })
+  }
+  if (!TRIGGER_ROUTES.includes(req.routeOptions.url ?? '')) {
+    return reply.code(403).send({ error: 'the trigger token can only start and read runs' })
   }
 })
 

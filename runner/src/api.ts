@@ -7,7 +7,7 @@ import { config } from './config.ts'
 async function call(method: 'GET' | 'POST', path: string, expected: number[], body?: unknown) {
   const res = await fetch(new URL(path, config.SERVER_URL), {
     method,
-    headers: { authorization: `Bearer ${config.API_TOKEN}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${config.RUNNER_TOKEN}`, 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!expected.includes(res.status)) {

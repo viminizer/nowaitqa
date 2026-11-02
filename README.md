@@ -15,17 +15,20 @@ docker compose up -d   # Postgres
 ## Server
 
 ```bash
-cp server/.env.example server/.env   # then set API_TOKEN
+cp server/.env.example server/.env   # then set RUNNER_TOKEN and TRIGGER_TOKEN
 pnpm --filter @nowait/server dev
 ```
 
-Every request needs `Authorization: Bearer <API_TOKEN>`, except `GET /health`.
+Every request needs `Authorization: Bearer <token>`, except `GET /health`. There are two tokens:
+
+- `RUNNER_TOKEN`: the runner. It can call every route.
+- `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
 
 | Route                | Who calls it | What it does                                                       |
 | -------------------- | ------------ | ------------------------------------------------------------------ |
 | `POST /runs`         | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
 | `GET /runs/:id`      | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
-| `PUT /devices`       | you          | Add or change a phone                                              |
+| `PUT /devices`       | you          | Add or change a phone (runner token)                               |
 | `GET /devices?host=` | runner       | The phones plugged into one machine                                |
 | `POST /lease`        | runner       | Take the next scenario. Waits up to 30s if there is none           |
 | `POST /heartbeat`    | runner       | Keep a lease alive while a scenario runs                           |
@@ -42,7 +45,7 @@ the next scenario from the server, runs it, reports it, and repeats.
 
 ```bash
 appium --port 4723                    # one Appium server for all phones (UiAutomator2 driver)
-cp runner/.env.example runner/.env    # then set API_TOKEN and HOST
+cp runner/.env.example runner/.env    # then set RUNNER_TOKEN and HOST
 pnpm --filter @nowait/runner start
 ```
 
@@ -87,5 +90,5 @@ the build. It starts a run for the new APK and, by default, waits for it and fai
 the tests fail (`WAIT_FOR_RESULT`). Its timeout (90 minutes) must be longer than your slowest run.
 It runs the scenarios from the latest nowait-qa `main`, so keep the runner on `main`.
 
-Jenkins needs a "Secret text" credential `nowait-api-token` with the server's `API_TOKEN`, and the
-test machine must be able to download the APK from Jenkins.
+Jenkins needs a "Secret text" credential `nowait-trigger-token` with the server's `TRIGGER_TOKEN`,
+and the test machine must be able to download the APK from Jenkins.

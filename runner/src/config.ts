@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 const Env = z.object({
   SERVER_URL: z.url(),
-  API_TOKEN: z.string().min(16),
+  RUNNER_TOKEN: z.string().min(16), // the server's RUNNER_TOKEN
   HOST: z.string().min(1), // this machine's name, as in the devices table
   TEST_ACCOUNT_PASSWORD: z.string().optional(), // shared by all test accounts in the pool
   SCENARIO_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),

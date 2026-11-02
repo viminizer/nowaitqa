@@ -3,7 +3,10 @@ import { z } from 'zod'
 
 const Env = z.object({
   DATABASE_URL: z.string().min(1),
-  API_TOKEN: z.string().min(16), // shared by the runner and Jenkins: Authorization: Bearer <token>
+  // Authorization: Bearer <token>. The runner's token can do everything; the trigger token
+  // (Jenkins) can only start runs and read them.
+  RUNNER_TOKEN: z.string().min(16),
+  TRIGGER_TOKEN: z.string().min(16),
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
