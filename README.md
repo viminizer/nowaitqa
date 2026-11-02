@@ -14,8 +14,12 @@ docker compose up -d   # Postgres
 
 ## Server
 
+Settings come from environment variables. `server/env.example` lists them; the ones with a value
+there have that default. Set at least the database and the two tokens:
+
 ```bash
-cp server/.env.example server/.env   # then set RUNNER_TOKEN and TRIGGER_TOKEN
+export DATABASE_URL=postgres://nowait:nowait@localhost:5432/nowait
+export RUNNER_TOKEN=<random, 16+ characters> TRIGGER_TOKEN=<another one>
 pnpm --filter @nowait/server dev
 ```
 
@@ -43,9 +47,11 @@ back to the queue. A run is stuck when no phone of its platform has taken or fin
 Runs on the machine the phones are plugged into, next to Appium. One worker per phone: each takes
 the next scenario from the server, runs it, reports it, and repeats.
 
+Settings are listed in `runner/env.example`:
+
 ```bash
-appium --port 4723                    # one Appium server for all phones (UiAutomator2 driver)
-cp runner/.env.example runner/.env    # then set RUNNER_TOKEN and HOST
+appium --port 4723   # one Appium server for all phones (UiAutomator2 driver)
+export SERVER_URL=http://localhost:3000 RUNNER_TOKEN=<the server's RUNNER_TOKEN> HOST=macmini-1
 pnpm --filter @nowait/runner start
 ```
 
