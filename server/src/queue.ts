@@ -31,6 +31,7 @@ import {
 import { config } from './config.ts'
 import { db } from './db/index.ts'
 import { accounts, catalogs, devices, queue, results, runs } from './db/schema.ts'
+import { messageOf } from './errors.ts'
 import { saveArtifact } from './storage/index.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -133,6 +134,13 @@ export async function createRun(body: CreateRunBody) {
 }
 
 type Run = typeof runs.$inferSelect
+
+// When a lease taken or renewed now runs out.
+const leaseEnd = () => sql`now() + make_interval(secs => ${config.LEASE_SECONDS})`
+
+// How long a result's uploads can take: 2 files in parallel, each up to 30 s x 3 tries in the S3
+// client (storage/s3.ts). A result's lease is renewed for at least this long (R34).
+const UPLOAD_SECONDS = 120
 
 // A scenario's final status, from its latest attempt.
 function scenarioStatus(
@@ -372,7 +380,7 @@ export async function leaseNext(
         status: 'leased',
         device: device.name,
         leasedAt: sql`now()`,
-        leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})`,
+        leaseUntil: leaseEnd(),
       })
       .where(eq(queue.id, row.id))
       .returning()
@@ -411,7 +419,7 @@ async function takeAccount(tx: Tx, queueId: number): Promise<string | null | fal
 export async function heartbeat(queueId: number, device: string) {
   const updated = await db
     .update(queue)
-    .set({ leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})` })
+    .set({ leaseUntil: leaseEnd() })
     .where(and(eq(queue.id, queueId), eq(queue.device, device), eq(queue.status, 'leased')))
     .returning({ id: queue.id })
   return updated.length > 0
@@ -428,31 +436,36 @@ export async function submitResult(body: ResultBody) {
   )
   // The files go up before the transaction: S3 is network I/O, and a transaction must not hold a
   // connection and the row lock while it waits. A result for a lease that is gone uploads nothing.
-  // The runner stops its heartbeat before it sends the result, so the lease is renewed here: a slow
-  // upload must not let it run out and turn this result into "lease expired" (R34).
+  // The runner stops its heartbeat before it sends the result, so the lease is renewed here, for
+  // the longer of a lease and the upload window: a slow upload must not let it run out and turn
+  // this result into "lease expired" (R34).
+  const renewFor = Math.max(config.LEASE_SECONDS, UPLOAD_SECONDS)
   const [row] = await db
     .update(queue)
-    .set({ leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})` })
+    .set({ leaseUntil: sql`now() + make_interval(secs => ${renewFor})` })
     .where(leasedHere)
     .returning()
   if (!row) return { saved: false, problems: [] }
   // The slot keeps names apart when a scenario repeats in one run.
   const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
-  // A file that can't be stored never changes the result (R50): it is saved without it, and the
-  // result's error says why.
+  // A file that can't be stored never changes the result (R50): it is saved without it. The result
+  // only says which file is missing (it shows on the dashboard and in chat); the store's own error,
+  // which can name buckets and request ids, goes to the server log (`problems`).
   const [screenshot, log] = await Promise.allSettled([
     body.screenshot &&
       saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64')),
     body.log && saveArtifact(row.runId, `${name}.log`, body.log),
   ])
-  const why = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason))
-  const problems = [
-    ...(screenshot.status === 'rejected'
-      ? [`screenshot not saved: ${why(screenshot.reason)}`]
-      : []),
-    ...(log.status === 'rejected' ? [`log not saved: ${why(log.reason)}`] : []),
-  ]
-  const kept = (file: typeof screenshot) => (file.status === 'fulfilled' && file.value) || undefined
+  const failed = Object.entries({ screenshot, log }).flatMap(([file, r]) =>
+    r.status === 'rejected' ? [{ file, why: messageOf(r.reason) }] : [],
+  )
+  const problems = failed.map(({ file, why }) => `${file} not saved: ${why}`)
+  const kept = (r: typeof screenshot) => (r.status === 'fulfilled' && r.value) || undefined
+  // The test's own error stays the first line: chat shows the first line as the reason.
+  const notes = failed.map(({ file }) => `(${file} not saved: the artifact store failed)`)
+  const testError =
+    body.error ?? (body.status === 'failed' && notes.length ? 'no error message' : '')
+  const error = [testError, ...notes].filter(Boolean).join('\n') || undefined
 
   const saved = await db.transaction(async (tx) => {
     // the lease may have run out while the files went up
@@ -461,7 +474,7 @@ export async function submitResult(body: ResultBody) {
     await recordAttempt(tx, done, {
       status: body.status,
       durationMs: body.durationMs,
-      error: [body.error, ...problems].filter(Boolean).join('\n') || undefined,
+      error,
       screenshot: kept(screenshot),
       log: kept(log),
     })

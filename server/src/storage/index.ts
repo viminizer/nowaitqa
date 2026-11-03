@@ -4,6 +4,7 @@ import { and, asc, eq, gt, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
 import { results, runs } from '../db/schema.ts'
+import { messageOf } from '../errors.ts'
 import { localStore } from './local.ts'
 import { s3Store } from './s3.ts'
 import type { ArtifactStore } from './store.ts'
@@ -28,13 +29,16 @@ export async function saveArtifact(runId: number, name: string, data: Buffer | s
 export const readArtifact = (key: string) => store.read(key)
 
 const CLEANUP_BATCH = 100
+const STORE_DOWN_AFTER = 3 // failures in a row: the store itself is down, not one run
 
 // Deletes the artifacts of runs older than ARTIFACT_DAYS, found in the database, so it works the
 // same for every store. Files first, then the keys: if a delete fails, the run is found again next
-// time. One run that can't be deleted never stops the others (R51): they are all tried, in run
-// order, and the failures are reported together at the end.
+// time. One run that can't be deleted never stops the others (R51): they are tried in run order,
+// and the failures are reported together at the end. Several failures in a row mean the store
+// itself is down: then it stops, instead of waiting out every run's timeout.
 export async function deleteOldArtifacts() {
   const failed: string[] = []
+  let inARow = 0
   let after = 0
   for (;;) {
     const old = await db
@@ -58,13 +62,18 @@ export async function deleteOldArtifacts() {
           .update(results)
           .set({ screenshot: null, log: null })
           .where(eq(results.runId, runId))
+        inARow = 0
       } catch (err) {
-        failed.push(`run ${runId}: ${(err as Error).message}`)
+        failed.push(`run ${runId}: ${messageOf(err)}`)
+        if (++inARow >= STORE_DOWN_AFTER) {
+          throw new Error(`the store looks down, cleanup stopped: ${failed.at(-1)}`)
+        }
       }
     }
     if (old.length < CLEANUP_BATCH) break
   }
   if (failed.length > 0) {
-    throw new Error(`could not delete the artifacts of ${failed.length} runs: ${failed.join('; ')}`)
+    const shown = failed.slice(0, 5).join('; ')
+    throw new Error(`could not delete the artifacts of ${failed.length} runs: ${shown}`)
   }
 }
