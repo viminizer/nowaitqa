@@ -144,6 +144,19 @@ page stops).
 To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
 `http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.
 
+## Notifications
+
+When a run ends, the server posts it to chat: one message with the result, and each failed
+scenario (error and screenshot) in its thread, up to 10. Every platform implements the same
+`Notifier` interface (`server/src/notify/notifier.ts`), so adding one is a new file plus one line
+in `server/src/notify/index.ts`. A run is sent once per platform; if the platform is down, the
+server tries again every 15 seconds for a day. Runs that ended before a platform was first turned
+on are not sent.
+
+Slack: create a Slack app with a bot token (`chat:write`, `files:write`), add it to the channel,
+and set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL`. Set `PUBLIC_URL` to link each message to its run
+on the dashboard.
+
 ## Jenkins
 
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after

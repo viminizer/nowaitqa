@@ -7,6 +7,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { deleteOldArtifacts } from './artifacts.ts'
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
+import { startNotifications } from './notify/index.ts'
 import { expireLeases, expireRuns } from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
@@ -78,5 +79,7 @@ setInterval(
   () => deleteOldArtifacts().catch((err) => app.log.error(err, 'deleteOldArtifacts failed')),
   24 * 60 * 60 * 1000,
 )
+
+await startNotifications(app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })

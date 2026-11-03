@@ -79,6 +79,12 @@ export const ApiError = z.object({ error: z.string() })
 export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
 export type ScenarioStatus = z.infer<typeof ScenarioStatus>
 
+// "45s" or "3m 12s". The dashboard and the chat messages both use it.
+export function formatDuration(ms: number) {
+  const s = Math.round(ms / 1000)
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
 // How many scenarios have each status. The runs list (server) and a run's page (web) both use it.
 export function countStatuses(statuses: ScenarioStatus[]) {
   const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }

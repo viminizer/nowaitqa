@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -21,21 +22,26 @@ export const devices = pgTable('devices', {
   enabled: boolean().notNull().default(true),
 })
 
-export const runs = pgTable('runs', {
-  id: serial().primaryKey(),
-  platform: text({ enum: ['android', 'ios'] }).notNull(),
-  appBuild: text().notNull(),
-  commit: text().notNull(),
-  trigger: text().notNull(),
-  split: text({ enum: ['queue', 'fixed'] })
-    .notNull()
-    .default('queue'),
-  status: text({ enum: ['running', 'passed', 'failed'] })
-    .notNull()
-    .default('running'),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  finishedAt: timestamp({ withTimezone: true }),
-})
+export const runs = pgTable(
+  'runs',
+  {
+    id: serial().primaryKey(),
+    platform: text({ enum: ['android', 'ios'] }).notNull(),
+    appBuild: text().notNull(),
+    commit: text().notNull(),
+    trigger: text().notNull(),
+    split: text({ enum: ['queue', 'fixed'] })
+      .notNull()
+      .default('queue'),
+    status: text({ enum: ['running', 'passed', 'failed'] })
+      .notNull()
+      .default('running'),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  // notifications: finished runs by when they finished
+  (t) => [index('runs_finished_idx').on(t.finishedAt).where(sql`status <> 'running'`)],
+)
 
 // One row per attempt of one scenario. A retry is a new row with attempt + 1 and the same slot.
 export const queue = pgTable(
@@ -92,6 +98,25 @@ export const catalogs = pgTable('catalogs', {
   commit: text().primaryKey(),
   scenarios: jsonb().$type<Catalog['scenarios']>().notNull(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+})
+
+// Which finished runs each chat platform has sent (notify/index.ts). A missing row = not sent yet.
+export const notifications = pgTable(
+  'notifications',
+  {
+    runId: integer()
+      .notNull()
+      .references(() => runs.id),
+    notifier: text().notNull(), // Notifier.name, like 'slack'
+    sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.notifier] })],
+)
+
+// When each chat platform was first turned on: runs that finished before are not sent.
+export const notifiersOn = pgTable('notifiers_on', {
+  name: text().primaryKey(), // Notifier.name
+  since: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
 
 // Test account pool. An account is busy while the queue row it points to is leased.

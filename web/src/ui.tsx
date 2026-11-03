@@ -1,4 +1,5 @@
 // Pieces every page uses, so the same thing looks the same everywhere.
+import { formatDuration } from '@nowait/shared'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Component, type ReactNode } from 'react'
 
@@ -73,11 +74,7 @@ export function Counts({ counts }: { counts: Record<string, number> }) {
   )
 }
 
-export function duration(ms: number | null) {
-  if (ms === null) return '-'
-  const s = Math.round(ms / 1000)
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
-}
+export const duration = (ms: number | null) => (ms === null ? '-' : formatDuration(ms))
 
 export const time = (date: Date | null) =>
   date ? date.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' }) : '-'
