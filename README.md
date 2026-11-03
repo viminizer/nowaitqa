@@ -44,6 +44,8 @@ There are two tokens:
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
 back to the queue. A run is stuck when no phone of its platform has taken or finished any work for
 `STUCK_RUN_MINUTES` (default 15), for example when no phone is connected. A stuck run fails.
+After a restart, the server waits that long before calling a run stuck, and one lease time before
+expiring a lease, so phones have time to come back.
 
 ## Runner
 

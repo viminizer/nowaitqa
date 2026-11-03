@@ -5,7 +5,12 @@ import { z } from 'zod'
 // a 500 from the database (R47).
 const INT4_MAX = 2_147_483_647
 export const DbId = z.number().int().positive().max(INT4_MAX)
-export const DbIdParam = z.coerce.number().pipe(DbId) // the same, from a URL path or query
+// the same, from a URL path or query: digits only, so one row has one URL (not 0x10 or 1e1)
+export const DbIdParam = z
+  .string()
+  .regex(/^\d+$/, 'must be a whole number')
+  .transform(Number)
+  .pipe(DbId)
 
 export const Platform = z.enum(['android', 'ios'])
 export type Platform = z.infer<typeof Platform>

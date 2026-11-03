@@ -72,17 +72,31 @@ if (existsSync(WEB_DIST)) {
 
 await runMigrations()
 
-// Background jobs: each runs once now, then every `ms`, so frequent restarts can't skip one (R48).
-// Errors are logged, and the next tick tries again.
+// First, so a run that the jobs below finish is news to a platform turned on just now.
+await startNotifications(app.log)
+
+// Background jobs: each runs once now and then `ms` after it ends, so a restart can't skip a long
+// timer (R48) and a slow run never overlaps the next. A failing job is retried on the next tick,
+// and logs its first 3 failures in a row, then every 100th (R49).
 const every = (ms: number, name: string, job: () => Promise<unknown>) => {
-  const run = () => job().catch((err) => app.log.error(err, `${name} failed`))
+  let failures = 0
+  const run = async () => {
+    try {
+      await job()
+      failures = 0
+    } catch (err) {
+      failures++
+      if (failures <= 3 || failures % 100 === 0) {
+        app.log.error(err, `${name} failed (${failures} in a row)`)
+      }
+    }
+    setTimeout(run, ms)
+  }
   run()
-  setInterval(run, ms)
 }
+// the expiry jobs wait at first on their own, to give runners time to come back (see queue.ts)
 every(15_000, 'expireLeases', expireLeases)
 every(60_000, 'expireRuns', expireRuns)
 every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts)
-
-await startNotifications(app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
