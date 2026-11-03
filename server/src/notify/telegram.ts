@@ -2,7 +2,7 @@
 // and failures to another, each by its message_thread_id, like Kevin's send-book bot. The bot must
 // be a member of the group, allowed to post in those topics.
 import { setTimeout as sleep } from 'node:timers/promises'
-import { messageOf } from '../errors.ts'
+import { messageOf } from '@nowait/shared'
 import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'

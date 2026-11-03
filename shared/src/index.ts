@@ -96,6 +96,13 @@ export const ApiError = z.object({ error: z.string() })
 export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
 export type ScenarioStatus = z.infer<typeof ScenarioStatus>
 
+// The text of anything thrown: an Error's message, or its name or code when the message is empty
+// (some S3 SDK errors have none), or the value itself (a string, an object).
+export function messageOf(err: unknown) {
+  if (!(err instanceof Error)) return String(err)
+  return err.message || (err as { code?: string }).code || err.name
+}
+
 // "45s" or "3m 12s". The dashboard and the chat messages both use it.
 export function formatDuration(ms: number) {
   const s = Math.round(ms / 1000)

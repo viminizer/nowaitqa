@@ -1,7 +1,9 @@
 // One worker per phone: take the next scenario, run it, report it, repeat.
-import type { Device, Lease } from '@nowait/shared'
+
+import { setTimeout as sleep } from 'node:timers/promises'
+import { type Device, type Lease, messageOf } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
-import { DeviceGoneError, heartbeat, lease, sendResult } from './api.ts'
+import { DeviceGoneError, heartbeat, lease, ResultNotSentError, sendResult } from './api.ts'
 import { commits } from './catalog.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
@@ -38,7 +40,10 @@ export async function runWorker(device: Device) {
       const result = await runScenario(session.driver, device, current)
       stopHeartbeat()
       const saved = await sendResult(result)
-      if (!saved) log(device.name, `result for ${current.scenarioId} ignored: the lease was gone`)
+      if (!saved) {
+        const why = 'the lease was gone, or an earlier try already saved it'
+        log(device.name, `result for ${current.scenarioId} not recorded by this send: ${why}`)
+      }
 
       // After a failure the app may be in a strange state: start clean next time.
       if (result.status === 'failed') {
@@ -53,9 +58,17 @@ export async function runWorker(device: Device) {
         log(device.name, 'worker stopped', err.message)
         return
       }
+      // A result that could not be sent is not replaced by a "runner error" result: one of its
+      // tries may still be saved by the server, and the error report would win over it. Its lease
+      // runs out instead: "lease expired", and the scenario runs again if it has attempts left
+      // (on its last attempt it stays failed). The phone itself is fine, so no pause.
+      if (err instanceof ResultNotSentError) {
+        log(device.name, `${err.message}; unless a try got through, it counts as "lease expired"`)
+        continue
+      }
       log(device.name, 'worker error', err)
       if (current) await reportRunnerError(device, current, err)
-      await new Promise((resolve) => setTimeout(resolve, ERROR_PAUSE_MS))
+      await sleep(ERROR_PAUSE_MS)
     }
   }
 }
@@ -123,6 +136,6 @@ async function reportRunnerError(device: Device, lease: Lease, err: unknown) {
     device: device.name,
     status: 'failed',
     durationMs: 0,
-    error: `runner error: ${err instanceof Error ? err.message : String(err)}`,
+    error: `runner error: ${messageOf(err)}`,
   }).catch((sendErr) => log(device.name, 'could not report the runner error', sendErr))
 }
