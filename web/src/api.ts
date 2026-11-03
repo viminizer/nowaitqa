@@ -2,22 +2,20 @@ import { QueryClient, useQuery } from '@tanstack/react-query'
 
 const REFRESH_MS = 5000
 
-export const queryClient = new QueryClient({
-  // polling refreshes anyway, so one quick retry is enough
-  defaultOptions: { queries: { retry: 1 } },
-})
-
-const always = () => true
+// No retries: polling refreshes anyway, and a 404 or a schema error fails the same way again.
+export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
 // Reads a dashboard API route with TanStack Query, checks it with its shared schema (R5, R40), and
-// reads it again every few seconds while `keepPolling(data)` is true. TanStack cancels the request
-// when the page goes away, pauses polling in a hidden tab, and refreshes when it is shown again.
-// The browser sends the basic auth it asked for when the page loaded.
+// reads it again every few seconds until `keepPolling(data)` says no (a finished run); from then on
+// the data never goes stale. TanStack cancels the request when the page goes away, pauses polling in
+// a hidden tab, and refreshes when it is shown again. The browser sends the basic auth it asked for
+// when the page loaded.
 export function useApi<T>(
   path: string,
   schema: { parse: (data: unknown) => T },
-  keepPolling: (data: T) => boolean = always,
+  keepPolling?: (data: T) => boolean,
 ) {
+  const done = (data?: T) => data !== undefined && keepPolling?.(data) === false
   return useQuery({
     queryKey: [path],
     queryFn: async ({ signal }) => {
@@ -29,7 +27,7 @@ export function useApi<T>(
       }
       return schema.parse(await res.json())
     },
-    refetchInterval: (query) =>
-      query.state.data && !keepPolling(query.state.data) ? false : REFRESH_MS,
+    refetchInterval: (query) => (done(query.state.data) ? false : REFRESH_MS),
+    staleTime: (query) => (done(query.state.data) ? Number.POSITIVE_INFINITY : 0),
   })
 }
