@@ -519,6 +519,9 @@ export async function expireLeases() {
       .set({ status: 'done' })
       .where(and(eq(queue.status, 'leased'), lt(queue.leaseUntil, sql`now()`)))
       .returning()
+    // by run: finishRunIfDone locks each run, and two batches that lock runs in different orders
+    // can deadlock
+    rows.sort((a, b) => a.runId - b.runId || a.id - b.id)
     for (const row of rows) {
       const error = `lease expired: lost contact with device ${row.device}`
       await recordAttempt(tx, row, { status: 'failed', durationMs: 0, error })
@@ -536,9 +539,8 @@ export async function expireRuns() {
   // Time the server was down is not "no progress": phones need STUCK_RUN_MINUTES of uptime to
   // come back before a run can count as stuck.
   if (process.uptime() < config.STUCK_RUN_MINUTES * 60) return
-  await db.transaction(async (tx) => {
-    const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
-    const stuck = await tx.execute<{ id: number; platform: string }>(sql`
+  const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
+  const stuck = await db.execute<{ id: number; platform: string }>(sql`
       SELECT r.id, r.platform FROM ${runs} r
       WHERE r.status = 'running' AND r.created_at < ${cutoff}
         AND NOT EXISTS (
@@ -547,11 +549,20 @@ export async function expireRuns() {
           LEFT JOIN ${results} res ON res.queue_id = q.id
           WHERE r2.platform = r.platform
             AND (q.status = 'leased' OR q.leased_at > ${cutoff} OR res.created_at > ${cutoff}))`)
-    for (const run of stuck.rows) {
-      const error = `stuck: no ${run.platform} phone took or finished any work for ${config.STUCK_RUN_MINUTES} minutes`
-      await closeRun(tx, run.id, error)
-    }
-  })
+  // One transaction per run: a run that can't be closed (a deadlock, a bad row) does not undo the
+  // others; it is tried again next time (R51).
+  const failed: string[] = []
+  for (const run of stuck.rows) {
+    const error = `stuck: no ${run.platform} phone took or finished any work for ${config.STUCK_RUN_MINUTES} minutes`
+    await db
+      .transaction((tx) => closeRun(tx, run.id, error))
+      .catch((err) => failed.push(`run ${run.id}: ${messageOf(err)}`))
+  }
+  if (failed.length > 0) {
+    throw new Error(
+      `could not close ${failed.length} stuck run(s): ${failed.slice(0, 5).join('; ')}`,
+    )
+  }
 }
 
 // Fails every open item of a run with `error`, and finishes the run. A phone that holds one of
@@ -683,7 +694,16 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
 
 async function finishRunIfDone(tx: Tx, runId: number) {
   // Lock the run first, so two attempts finishing at the same moment cannot both miss the end.
-  await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for('update')
+  // NO KEY UPDATE, not UPDATE: the result this transaction just saved points to the run, which
+  // puts a KEY SHARE lock on it, and so did the other attempt's. FOR UPDATE waits on that lock
+  // from both sides (a deadlock); NO KEY UPDATE doesn't, and two of them still take turns.
+  const [run] = await tx
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .for('no key update')
+  // already finished (a cancel or stuck close that raced the last result): keep its end as it is
+  if (run?.status !== 'running') return
 
   const open = await tx.execute(
     sql`SELECT 1 FROM ${queue} WHERE run_id = ${runId} AND status <> 'done' LIMIT 1`,
