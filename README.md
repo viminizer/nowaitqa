@@ -2,6 +2,8 @@
 
 Run mobile app tests on real phones with Appium, from one shared queue.
 Any free phone takes the next test, so fast phones never wait for slow ones.
+In each run, phones take the longest tests first (by their recent times), so a run does not end
+with one phone on a long test while the others wait.
 
 Status: in development.
 
