@@ -108,14 +108,14 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   )
 
-  // --- actions: each one is logged, so the server log tells who changed what and when ---
+  // --- actions: each is logged before it runs; Fastify logs its answer with the same reqId ---
 
   // A new run from an old one. A refusal (still running, nothing failed, no phones) is a 400.
-  const started = async (start: Promise<number | null>, reply: FastifyReply) => {
+  const started = async (start: Promise<number | null>, what: string, reply: FastifyReply) => {
     try {
       const id = await start
       return id === null
-        ? reply.code(404).send({ error: 'not found' })
+        ? reply.code(404).send({ error: `${what} not found` })
         : reply.code(201).send({ id })
     } catch (err) {
       if (err instanceof BadRunError) return reply.code(400).send({ error: err.message })
@@ -133,11 +133,8 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req, reply) => {
-      const sent = await started(runAgain(req.params.id, req.body.failedOnly), reply)
-      req.log.info(
-        `dashboard: run ${req.params.id} again (failedOnly ${req.body.failedOnly}): ${reply.statusCode}`,
-      )
-      return sent
+      req.log.info(`dashboard: run ${req.params.id} again (failedOnly ${req.body.failedOnly})`)
+      return started(runAgain(req.params.id, req.body.failedOnly), 'run', reply)
     },
   )
 
@@ -150,22 +147,18 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req, reply) => {
-      const sent = await started(retryAttempt(req.params.queueId), reply)
-      req.log.info(`dashboard: attempt ${req.params.queueId} again: ${reply.statusCode}`)
-      return sent
+      req.log.info(`dashboard: attempt ${req.params.queueId} again`)
+      return started(retryAttempt(req.params.queueId), 'attempt', reply)
     },
   )
 
+  // No response schemas on the 204 routes, like the runner's (work.ts).
   app.post(
     '/dashboard/api/runs/:id/cancel',
-    {
-      schema: {
-        params: z.object({ id: DbIdParam }),
-      },
-    },
+    { schema: { params: z.object({ id: DbIdParam }) } },
     async (req, reply) => {
+      req.log.info(`dashboard: cancel run ${req.params.id}`)
       const cancelled = await cancelRun(req.params.id)
-      req.log.info(`dashboard: cancel run ${req.params.id}: ${cancelled}`)
       if (cancelled === null) return reply.code(404).send({ error: 'run not found' })
       if (!cancelled) return reply.code(409).send({ error: 'the run is already finished' })
       return reply.code(204).send()
@@ -174,15 +167,10 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/dashboard/api/devices/:name/enabled',
-    {
-      schema: {
-        params: z.object({ name: z.string().min(1) }),
-        body: DeviceEnabledBody,
-      },
-    },
+    { schema: { params: z.object({ name: z.string().min(1) }), body: DeviceEnabledBody } },
     async (req, reply) => {
+      req.log.info(`dashboard: phone ${req.params.name} enabled ${req.body.enabled}`)
       const found = await setDeviceEnabled(req.params.name, req.body.enabled)
-      req.log.info(`dashboard: phone ${req.params.name} enabled ${req.body.enabled}: ${found}`)
       if (!found) return reply.code(404).send({ error: 'phone not found' })
       return reply.code(204).send()
     },

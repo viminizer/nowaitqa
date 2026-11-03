@@ -1,10 +1,9 @@
-import { Device } from '@nowait/shared'
+import { DeviceBody } from '@nowait/shared'
 import { eq } from 'drizzle-orm'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { db } from '../db/index.ts'
 import { devices } from '../db/schema.ts'
-import { releaseFixedItems } from '../queue.ts'
 
 export const deviceRoutes: FastifyPluginAsyncZod = async (app) => {
   // The runner asks for the phones on its machine. Bounded by the phones one machine can hold, so
@@ -14,14 +13,13 @@ export const deviceRoutes: FastifyPluginAsyncZod = async (app) => {
   )
 
   // Add a phone, or change one: adding a phone is one call (the article's "add one entry").
-  app.put('/devices', { schema: { body: Device } }, async (req, reply) => {
+  app.put('/devices', { schema: { body: DeviceBody } }, async (req, reply) => {
     try {
       const [device] = await db
         .insert(devices)
         .values(req.body)
         .onConflictDoUpdate({ target: devices.name, set: req.body })
         .returning()
-      if (device && !device.enabled) await releaseFixedItems(device.name)
       return device
     } catch (err) {
       // Drizzle wraps the Postgres error; 23505 = unique value already taken.

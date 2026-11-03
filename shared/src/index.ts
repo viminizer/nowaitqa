@@ -25,6 +25,9 @@ export const Device = z.object({
   enabled: z.boolean().default(true),
 })
 export type Device = z.infer<typeof Device>
+// PUT /devices: without `enabled`, a new phone is on and a known one keeps its setting (the
+// dashboard may have turned it off).
+export const DeviceBody = Device.extend({ enabled: z.boolean().optional() })
 
 // A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')

@@ -239,8 +239,9 @@ export async function getRun(id: number): Promise<RunSummary | null> {
   return run ? summarize(run) : null
 }
 
-async function summarize(run: Run): Promise<RunSummary> {
-  // One row per scenario of the run (catalog x repeat): Jenkins needs them all, so not paged.
+// Each scenario of the run (catalog x repeat), in order, with its status from its latest attempt.
+// Jenkins needs them all, so not paged.
+async function scenariosOf(run: Run) {
   const latest = await db
     .selectDistinctOn([queue.slot], {
       scenarioId: queue.scenarioId,
@@ -251,6 +252,10 @@ async function summarize(run: Run): Promise<RunSummary> {
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, run.id))
     .orderBy(queue.slot, desc(queue.attempt))
+  return latest.map((a) => ({ id: a.scenarioId, status: scenarioStatus(run, a.attempt, a.result) }))
+}
+
+async function summarize(run: Run): Promise<RunSummary> {
   // busy = holding a lease, from lease to result; summed by the database, one row per phone
   const phones = await db
     .select({
@@ -271,10 +276,7 @@ async function summarize(run: Run): Promise<RunSummary> {
   return {
     ...run,
     durationMs,
-    scenarios: latest.map((a) => ({
-      id: a.scenarioId,
-      status: scenarioStatus(run, a.attempt, a.result),
-    })),
+    scenarios: await scenariosOf(run),
     devices: phones.flatMap(({ name, attempts, busyMs }) => {
       if (!name) return []
       const busy = Math.round(busyMs)
@@ -377,7 +379,12 @@ export async function leaseNext(
           eq(queue.status, 'pending'),
           eq(runs.platform, device.platform),
           inArray(runs.commit, commits), // only runs whose scenarios this runner has
-          or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
+          // a fixed split's item is its phone's, or anyone's once that phone is off
+          or(
+            isNull(queue.assignedDevice),
+            eq(queue.assignedDevice, device.name),
+            sql`not exists (select 1 from ${devices} d where d.name = ${queue.assignedDevice} and d.enabled)`,
+          ),
         ),
       )
       .orderBy(desc(sql`${queue.runId} = ${currentRunId}`), asc(queue.runId), asc(queue.id))
@@ -568,7 +575,9 @@ async function closeRun(tx: Tx, runId: number, error: string) {
 // Stops a running run: its open items fail with "cancelled". False when it is already finished.
 export async function cancelRun(runId: number) {
   const cancelled = await db.transaction(async (tx) => {
-    const [run] = await tx.select().from(runs).where(eq(runs.id, runId)).for('update')
+    // No lock on the run here: queue rows first, then the run (in finishRunIfDone), the same order
+    // as a result being saved, or the two could deadlock. Two cancels at once both answer 204.
+    const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId))
     if (!run) return null
     if (run.status !== 'running') return false
     await closeRun(tx, runId, 'cancelled on the dashboard')
@@ -583,6 +592,18 @@ export async function cancelRun(runId: number) {
 async function startAgain(run: Run, scenarioIds: string[], trigger: string) {
   if (run.status === 'running') throw new BadRunError(`run #${run.id} is still running`)
   if (scenarioIds.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
+  // Phones only take runs on their runner's newest scenario commit or the one before (catalog.ts).
+  // ponytail: the 2 newest catalogs stand for that; per-runner commits if runners drift apart.
+  const recent = await db
+    .select({ commit: catalogs.commit })
+    .from(catalogs)
+    .orderBy(desc(catalogs.updatedAt))
+    .limit(2)
+  if (!recent.some((c) => c.commit === run.commit)) {
+    throw new BadRunError(
+      `the runners no longer have the scenarios of commit ${run.commit.slice(0, 7)}: start a new run instead`,
+    )
+  }
   const { platform, appBuild, commit, split } = run
   return insertRun({ platform, appBuild, commit, split, trigger }, scenarioIds)
 }
@@ -591,7 +612,7 @@ async function startAgain(run: Run, scenarioIds: string[], trigger: string) {
 export async function runAgain(runId: number, failedOnly: boolean) {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
   if (!run) return null
-  const { scenarios } = await summarize(run)
+  const scenarios = await scenariosOf(run)
   const ids = scenarios.filter((s) => !failedOnly || s.status === 'failed').map((s) => s.id)
   const what = failedOnly ? 'failed scenarios' : 'all scenarios'
   return startAgain(run, ids, `dashboard: ${what} of run #${runId}`)
@@ -611,8 +632,8 @@ export async function retryAttempt(queueId: number) {
   return startAgain(found.run, [found.scenarioId], trigger)
 }
 
-// Turns a phone on or off. A phone that is off finishes its current attempt and takes no more.
-// False when there is no such phone.
+// Turns a phone on or off. A phone that is off finishes its current attempt and takes no more,
+// and the other phones take its items in a fixed split. False when there is no such phone.
 export async function setDeviceEnabled(name: string, enabled: boolean) {
   const [device] = await db
     .update(devices)
@@ -620,25 +641,9 @@ export async function setDeviceEnabled(name: string, enabled: boolean) {
     .where(eq(devices.name, name))
     .returning({ name: devices.name })
   if (!device) return false
-  await releaseFixedItems(name)
+  // its items in a fixed split are now anyone's (leaseNext): waiting phones look again
+  if (!enabled) notifyWork()
   return true
-}
-
-// A fixed split's items wait for their phone. When it is off they go to any phone, so the run
-// does not wait for it forever (expireRuns only sees platforms where no phone works at all).
-export async function releaseFixedItems(name: string) {
-  const released = await db
-    .update(queue)
-    .set({ assignedDevice: null })
-    .where(
-      and(
-        eq(queue.assignedDevice, name),
-        eq(queue.status, 'pending'),
-        sql`not exists (select 1 from ${devices} where ${devices.name} = ${name} and ${devices.enabled})`,
-      ),
-    )
-    .returning({ id: queue.id })
-  if (released.length > 0) notifyWork()
 }
 
 type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {
