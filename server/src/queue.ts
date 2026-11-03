@@ -683,7 +683,10 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
 
 async function finishRunIfDone(tx: Tx, runId: number) {
   // Lock the run first, so two attempts finishing at the same moment cannot both miss the end.
-  await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for('update')
+  // NO KEY UPDATE, not UPDATE: the result this transaction just saved points to the run, which
+  // puts a KEY SHARE lock on it, and so did the other attempt's. FOR UPDATE waits on that lock
+  // from both sides (a deadlock); NO KEY UPDATE doesn't, and two of them still take turns.
+  await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for('no key update')
 
   const open = await tx.execute(
     sql`SELECT 1 FROM ${queue} WHERE run_id = ${runId} AND status <> 'done' LIMIT 1`,
