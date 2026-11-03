@@ -1,9 +1,8 @@
 // Telegram, through the Bot API: a bot in a group with topics (a forum). Summaries go to one topic
 // and failures to another, each by its message_thread_id, like Kevin's send-book bot. The bot must
 // be a member of the group, allowed to post in those topics.
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'
 
@@ -12,67 +11,53 @@ type Settings = {
   chatId: string // the group, like -1001234567890
   runsTopic?: number // every run's summary; unset = the group's General topic
   errorsTopic?: number // each failed scenario; unset = replies to the summary
-  apiUrl: string
+  apiUrl: string // https://api.telegram.org, or a self-hosted Bot API server
 }
 
-const TIMEOUT_MS = 30_000 // per call; the job waits for the run, so a hung call can't block it
-const RATE_LIMIT_TRIES = 3
+// A group takes about 20 messages a minute: keep a gap, so a burst of runs is not refused.
+// ponytail: one gap per notifier, so one group; per-chat gaps if it ever posts to several.
+const GAP_MS = 3_000
+const CAPTION_CHARS = 500 // of the error line; a photo caption holds 1024 characters in all
 
-type Answer = { ok?: boolean; description?: string; parameters?: { retry_after?: number } }
+// Every text message: HTML, and no preview card for the dashboard link.
+const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }
 
 export function telegramNotifier(settings: Settings): Notifier {
   const { token, chatId, runsTopic, errorsTopic, apiUrl } = settings
+  let lastCall = 0
 
-  // Telegram answers { ok: false, description } when a call fails, and 429 with
-  // parameters.retry_after when it is rate limited: then it waits and tries again. The token is
-  // in the URL, so errors never show the URL.
+  // Telegram answers { ok: false, description } when a call fails. The token is in the URL, so
+  // errors never show the URL.
   async function call(method: string, body: Record<string, unknown> | FormData) {
-    for (let tries = 1; ; tries++) {
-      const res = await fetch(`${apiUrl}/bot${token}/${method}`, {
-        method: 'POST',
-        ...(body instanceof FormData
-          ? { body }
-          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      })
-      const data = (await res.json().catch(() => ({}))) as Answer & { result?: unknown }
-      if (res.status === 429 && tries < RATE_LIMIT_TRIES) {
-        await sleep(Math.min(data.parameters?.retry_after ?? 1, 30) * 1000)
-        continue
-      }
-      if (!data.ok)
-        throw new Error(`telegram ${method}: ${data.description ?? `HTTP ${res.status}`}`)
-      return data.result as { message_id: number }
-    }
+    const wait = lastCall + GAP_MS - Date.now()
+    if (wait > 0) await sleep(wait)
+    lastCall = Date.now()
+    const { status, data } = await post(
+      `${apiUrl}/bot${token}/${method}`,
+      body instanceof FormData
+        ? { body }
+        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+    )
+    if (!data.ok) throw new Error(`telegram ${method}: ${data.description ?? `HTTP ${status}`}`)
+    return data.result as { message_id: number }
   }
 
   const topic = (id?: number) => ({ chat_id: chatId, ...(id ? { message_thread_id: id } : {}) })
 
-  // A photo with the failure as its caption. When the file is gone or the upload fails, a text
-  // message with the reason.
-  async function sendFailure(where: Record<string, unknown>, text: string, failure: Failure) {
-    const html = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }
-    if (failure.screenshot) {
-      const path = failure.screenshot
-      try {
-        const png = await readFile(path).catch((err) => {
-          throw new Error(`the file is gone (${err.code ?? err.message})`)
-        })
-        const form = new FormData()
-        for (const [key, value] of Object.entries({
-          ...where,
-          caption: text,
-          parse_mode: 'HTML',
-        })) {
-          form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value))
-        }
-        form.append('photo', new Blob([png], { type: 'image/png' }), basename(path))
-        return await call('sendPhoto', form)
-      } catch (err) {
-        text += `\n<i>(screenshot not attached: ${escapeText((err as Error).message)})</i>`
+  // A photo with the failure as its caption, or text with the reason the photo is missing.
+  async function sendFailure(where: Record<string, unknown>, failure: Failure, run: RunReport) {
+    const text = failureHtml(run, failure)
+    const shot = await sendScreenshot(failure.screenshot, (png, filename) => {
+      const form = new FormData()
+      for (const [key, value] of Object.entries({ ...where, caption: text, parse_mode: 'HTML' })) {
+        form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value))
       }
-    }
-    return call('sendMessage', { ...where, ...html, text })
+      form.append('photo', new Blob([png], { type: 'image/png' }), filename)
+      return call('sendPhoto', form)
+    })
+    if (shot.sent) return
+    const why = shot.reason ? `\n<i>(screenshot not attached: ${escapeText(shot.reason)})</i>` : ''
+    await call('sendMessage', { ...where, ...HTML, text: text + why })
   }
 
   return {
@@ -80,9 +65,8 @@ export function telegramNotifier(settings: Settings): Notifier {
     async runFinished(report) {
       const summary = await call('sendMessage', {
         ...topic(runsTopic),
+        ...HTML,
         text: summaryHtml(report),
-        parse_mode: 'HTML',
-        link_preview_options: { is_disabled: true },
       })
       // From here the run is in the group: a failed detail must not post it again.
       try {
@@ -90,16 +74,11 @@ export function telegramNotifier(settings: Settings): Notifier {
         const where = errorsTopic
           ? topic(errorsTopic)
           : { ...topic(runsTopic), reply_parameters: { message_id: summary.message_id } }
-        for (const failure of report.failures) {
-          await sendFailure(where, failureHtml(report, failure), failure)
-        }
+        for (const failure of report.failures) await sendFailure(where, failure, report)
         if (report.moreFailures > 0) {
           const link = report.url ? ` (<a href="${attr(report.url)}">see all</a>)` : ''
-          await call('sendMessage', {
-            ...where,
-            text: `${moreText(report.moreFailures)} in ${runTitle(report)}${link}`,
-            parse_mode: 'HTML',
-          })
+          const text = `${moreText(report.moreFailures)} in ${runTitle(report)}${link}`
+          await call('sendMessage', { ...where, ...HTML, text })
         }
       } catch (err) {
         throw new PartialSendError(`the failures are incomplete: ${(err as Error).message}`)
@@ -109,6 +88,12 @@ export function telegramNotifier(settings: Settings): Notifier {
 }
 
 const attr = (text: string) => escapeText(text).replaceAll('"', '&quot;')
+
+// Cut by characters, not UTF-16 units, so an emoji is never split.
+function cut(text: string, max: number) {
+  const chars = [...text]
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : text
+}
 
 // "Run #5" as a link to the dashboard when PUBLIC_URL is set
 const runTitle = ({ run, url }: RunReport) =>
@@ -129,6 +114,6 @@ function failureHtml(report: RunReport, { scenarioId, device, error }: Failure) 
   const where = device ? ` on ${escapeText(device)}` : ''
   return [
     `❌ <b>${escapeText(scenarioId)}</b>${where} · ${runTitle(report)}`,
-    `<code>${escapeText(errorLine(error))}</code>`,
+    `<code>${escapeText(cut(errorLine(error), CAPTION_CHARS))}</code>`,
   ].join('\n')
 }

@@ -16,11 +16,8 @@ export function countsText({ run, counts }: RunReport) {
   return run.durationMs === null ? shown : `${shown} · ${formatDuration(run.durationMs)}`
 }
 
-// The first line of an error that says something, cut to `max` characters (a Telegram photo
-// caption holds 1024).
-export function errorLine(error: string | null, max = 500) {
-  const line = error?.split('\n').find((l) => l.trim()) ?? 'no error message'
-  return line.length > max ? `${line.slice(0, max)}…` : line
-}
+// The first line of an error that says something.
+export const errorLine = (error: string | null) =>
+  error?.split('\n').find((l) => l.trim()) ?? 'no error message'
 
 export const moreText = (more: number) => `…and ${more} more failed scenarios`

@@ -165,6 +165,8 @@ topic, by its id (`message_thread_id`):
 - `TELEGRAM_ERRORS_TOPIC`: each failed scenario, with its screenshot and a link to its run. Unset:
   replies to the run's summary.
 
+A group takes about 20 messages a minute, so the bot waits 3 seconds between messages.
+
 ## Jenkins
 
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after

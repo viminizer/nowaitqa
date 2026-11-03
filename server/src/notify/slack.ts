@@ -1,62 +1,42 @@
 // Slack, through the Web API with a bot token: a webhook can't post in threads or upload files.
 // The app needs the chat:write and files:write scopes, and must be in the channel.
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
-import { setTimeout as sleep } from 'node:timers/promises'
+import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'
 
 // apiUrl: https://slack.com/api, or https://slack-gov.com/api for GovSlack.
 type Settings = { token: string; channel: string; apiUrl: string }
 
-const TIMEOUT_MS = 30_000 // per call; the job waits for the run, so a hung call can't block it
-const RATE_LIMIT_TRIES = 3
-
 export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
-  // Slack answers 200 with { ok: false, error } when a call fails, and 429 with Retry-After when
-  // it is rate limited: then it waits and tries again.
+  // Slack answers 200 with { ok: false, error } when a call fails.
   async function call(method: string, body: Record<string, unknown>, form = false) {
-    for (let tries = 1; ; tries++) {
-      const res = await fetch(`${apiUrl}/${method}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json',
-        },
-        body: form
-          ? new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))
-          : JSON.stringify(body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      })
-      if (res.status === 429 && tries < RATE_LIMIT_TRIES) {
-        await sleep(Math.min(Number(res.headers.get('retry-after')) || 1, 30) * 1000)
-        continue
-      }
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
-      if (!data.ok) throw new Error(`slack ${method}: ${data.error ?? `HTTP ${res.status}`}`)
-      return data as Record<string, unknown>
-    }
+    const { status, data } = await post(`${apiUrl}/${method}`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json',
+      },
+      body: form
+        ? new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))
+        : JSON.stringify(body),
+    })
+    if (!data.ok) throw new Error(`slack ${method}: ${data.error ?? `HTTP ${status}`}`)
+    return data
   }
 
   async function upload(
     channelId: string,
     threadTs: string,
     text: string,
-    path: string,
     png: Buffer<ArrayBuffer>,
+    filename: string,
   ) {
-    const filename = basename(path)
     const { upload_url, file_id } = await call(
       'files.getUploadURLExternal',
       { filename, length: png.length },
       true,
     )
-    const res = await fetch(String(upload_url), {
-      method: 'POST',
-      body: png,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
-    if (!res.ok) throw new Error(`slack upload: HTTP ${res.status}`)
+    const { status } = await post(String(upload_url), { body: png })
+    if (status >= 300) throw new Error(`slack upload: HTTP ${status}`)
     await call('files.completeUploadExternal', {
       files: [{ id: file_id, title: filename }],
       channel_id: channelId,
@@ -65,22 +45,15 @@ export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
     })
   }
 
-  // A thread reply with the screenshot. When the file is gone or the upload fails, the reply is
-  // text with the reason.
+  // A thread reply with the screenshot, or text with the reason it is missing.
   async function reply(channelId: string, threadTs: string, failure: Failure) {
-    let text = failureText(failure)
-    if (failure.screenshot) {
-      const path = failure.screenshot
-      try {
-        const png = await readFile(path).catch((err) => {
-          throw new Error(`the file is gone (${err.code ?? err.message})`)
-        })
-        return await upload(channelId, threadTs, text, path, png)
-      } catch (err) {
-        text += `\n_(screenshot not attached: ${escapeText((err as Error).message)})_`
-      }
-    }
-    await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text })
+    const text = failureText(failure)
+    const shot = await sendScreenshot(failure.screenshot, (png, filename) =>
+      upload(channelId, threadTs, text, png, filename),
+    )
+    if (shot.sent) return
+    const why = shot.reason ? `\n_(screenshot not attached: ${escapeText(shot.reason)})_` : ''
+    await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text: text + why })
   }
 
   return {
