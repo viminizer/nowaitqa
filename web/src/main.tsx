@@ -19,7 +19,9 @@ function App() {
     .slice(1)
     .split('?')
   const runId = path.match(/^\/runs\/(\d+)$/)?.[1]
-  const before = new URLSearchParams(query).get('before')
+  const params = new URLSearchParams(query)
+  const before = params.get('before')
+  const page = Math.max(0, Number.parseInt(params.get('page') ?? '', 10) || 0)
 
   return (
     <>
@@ -40,7 +42,7 @@ function App() {
         {/* the key: another page, run or `before` clears a render error (R42); data is cached by URL */}
         <ErrorBoundary key={`${path}?${query}`}>
           {runId ? (
-            <RunPage id={Number(runId)} />
+            <RunPage id={Number(runId)} page={page} />
           ) : path === '/devices' ? (
             <DevicesPage />
           ) : (

@@ -140,10 +140,36 @@ export const Attempt = z.object({
 })
 export type Attempt = z.infer<typeof Attempt>
 
-// now: the database clock, the same one as every timestamp, so a running run's timeline never
-// mixes clocks.
-export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt), now: z.coerce.date() })
+// One block of a run's timeline: the time a phone spent on one attempt.
+export const TimelineBlock = Attempt.pick({
+  queueId: true,
+  scenarioId: true,
+  attempt: true,
+  device: true,
+  status: true,
+  leasedAt: true,
+  finishedAt: true,
+})
+export type TimelineBlock = z.infer<typeof TimelineBlock>
+
+// A run for its dashboard page. now: the database clock, the same one as every timestamp, so a
+// running run's timeline never mixes clocks. timeline: the first TIMELINE_LIMIT blocks in the order
+// phones took them; timelineCut says there were more.
+export const RunDetail = RunSummary.extend({
+  now: z.coerce.date(),
+  timeline: z.array(TimelineBlock),
+  timelineCut: z.boolean(),
+})
 export type RunDetail = z.infer<typeof RunDetail>
+
+// One page of a run's attempts, failures first. next: the next page number, or null on the last.
+// runStatus: the page polls itself until the run is over, so its last read has the final results.
+export const AttemptPage = z.object({
+  attempts: z.array(Attempt),
+  next: z.number().int().nullable(),
+  runStatus: RunSummary.shape.status,
+})
+export type AttemptPage = z.infer<typeof AttemptPage>
 
 // A phone and what it does now. busy: the attempt it holds a lease for.
 export const DeviceList = z.object({

@@ -2,15 +2,13 @@ import type { RunDetail } from '@nowait/shared'
 import { duration } from './ui.tsx'
 
 // One lane per phone, one block per attempt, from lease to result. The gaps are idle time: with the
-// shared queue they stay small.
+// shared queue they stay small. A very big run shows its first blocks only (timelineCut).
 export function Timeline({ run }: { run: RunDetail }) {
   const start = run.createdAt.getTime()
   const end = (run.finishedAt ?? run.now).getTime() // server clock only (R39)
   const total = Math.max(end - start, 1)
   const percent = (ms: number) => `${(ms / total) * 100}%`
-  const phones = [
-    ...new Set(run.attempts.flatMap((a) => (a.leasedAt && a.device ? [a.device] : []))),
-  ].sort()
+  const phones = [...new Set(run.timeline.flatMap((a) => (a.device ? [a.device] : [])))].sort()
 
   if (phones.length === 0) return <p className="muted">No phone has taken work yet.</p>
   return (
@@ -30,7 +28,7 @@ export function Timeline({ run }: { run: RunDetail }) {
               ) : null}
             </div>
             <div className="lane-bar">
-              {run.attempts.map((a) => {
+              {run.timeline.map((a) => {
                 if (a.device !== phone || !a.leasedAt) return null
                 const from = a.leasedAt.getTime()
                 const to = a.finishedAt?.getTime() ?? end
@@ -57,6 +55,9 @@ export function Timeline({ run }: { run: RunDetail }) {
           <span>{duration(total)}</span>
         </div>
       </div>
+      {run.timelineCut && (
+        <p className="muted">Shows the first {run.timeline.length} attempts the phones took.</p>
+      )}
     </div>
   )
 }

@@ -1,6 +1,8 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
 import {
+  type Attempt,
+  type AttemptPage,
   type Catalog,
   type CreateRunBody,
   countStatuses,
@@ -176,9 +178,15 @@ export async function listRuns(before?: number): Promise<RunList> {
   }
 }
 
-// One run with every attempt.
-// ponytail: not paged. A run holds catalog size x repeat (at most 20) x MAX_ATTEMPTS rows, and the
-// catalog has no limit. Page the attempts if catalogs grow into the thousands.
+// An attempt's status: its result, or where it is in the queue. Every done row has a result (expiry
+// saves one too).
+const attemptStatus = (queueStatus: QueueRow['status'], result: 'passed' | 'failed' | null) =>
+  result ?? (queueStatus === 'leased' ? 'leased' : 'pending')
+
+const TIMELINE_LIMIT = 1000
+
+// A run's summary and timeline. Reads every attempt of the run, but only the small columns: the
+// error text and files come a page at a time from listAttempts().
 export async function getRun(id: number): Promise<RunDetail | null> {
   // now: the database clock, the same as every timestamp below
   const [found] = await db
@@ -199,10 +207,6 @@ export async function getRun(id: number): Promise<RunDetail | null> {
       leasedAt: queue.leasedAt,
       result: results.status,
       finishedAt: results.createdAt,
-      durationMs: results.durationMs,
-      error: results.error,
-      screenshot: results.screenshot,
-      log: results.log,
     })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
@@ -225,25 +229,75 @@ export async function getRun(id: number): Promise<RunDetail | null> {
     }
   }
 
-  const scenarios = [...bySlot.values()]
+  const taken = rows
+    .flatMap((a) => (a.leasedAt ? [{ ...a, leasedAt: a.leasedAt }] : []))
+    .sort((a, b) => a.leasedAt.getTime() - b.leasedAt.getTime())
   return {
     ...run,
     durationMs,
     now,
-    attempts: rows.map(({ queueStatus, result, screenshot, log, ...a }) => ({
-      ...a,
-      // every done row has a result: expiry saves one too
-      status: result ?? (queueStatus === 'leased' ? 'leased' : 'pending'),
-      screenshot: screenshot !== null,
-      log: log !== null,
+    timeline: taken.slice(0, TIMELINE_LIMIT).map((a) => ({
+      queueId: a.queueId,
+      scenarioId: a.scenarioId,
+      attempt: a.attempt,
+      device: a.device,
+      status: attemptStatus(a.queueStatus, a.result),
+      leasedAt: a.leasedAt,
+      finishedAt: a.finishedAt,
     })),
-    scenarios,
+    timelineCut: taken.length > TIMELINE_LIMIT,
+    scenarios: [...bySlot.values()],
     devices: [...byDevice].map(([name, s]) => ({
       name,
       ...s,
       idleMs: durationMs === null ? null : durationMs - s.busyMs,
     })),
   }
+}
+
+const ATTEMPTS_PAGE = 50
+
+// One page of a run's attempts with their errors and files, failures first (R24).
+export async function listAttempts(runId: number, page: number): Promise<AttemptPage | null> {
+  const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
+  if (!run) return null
+  const rows = await db
+    .select({
+      queueId: queue.id,
+      slot: queue.slot,
+      scenarioId: queue.scenarioId,
+      attempt: queue.attempt,
+      device: queue.device,
+      queueStatus: queue.status,
+      leasedAt: queue.leasedAt,
+      result: results.status,
+      finishedAt: results.createdAt,
+      durationMs: results.durationMs,
+      error: results.error,
+      screenshot: results.screenshot,
+      log: results.log,
+    })
+    .from(queue)
+    .leftJoin(results, eq(results.queueId, queue.id))
+    .where(eq(queue.runId, runId))
+    .orderBy(
+      // failures first: they are what people open a run for
+      sql`case when ${results.status} = 'failed' then 0 when ${queue.status} = 'leased' then 1
+        when ${queue.status} = 'pending' then 2 else 3 end`,
+      asc(queue.id),
+    )
+    .limit(ATTEMPTS_PAGE + 1) // one more tells if there is a next page
+    .offset(page * ATTEMPTS_PAGE)
+
+  const attempts: Attempt[] = rows
+    .slice(0, ATTEMPTS_PAGE)
+    .map(({ queueStatus, result, screenshot, log, ...a }) => ({
+      ...a,
+      status: attemptStatus(queueStatus, result),
+      screenshot: screenshot !== null,
+      log: log !== null,
+    }))
+  return { attempts, next: rows.length > ATTEMPTS_PAGE ? page + 1 : null, runStatus: run.status }
 }
 
 // --- leasing ---------------------------------------------------------------------------------

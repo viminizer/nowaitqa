@@ -1,12 +1,12 @@
 // Read-only routes for the dashboard (web/). The browser signs in with basic auth (see main.ts).
 import { readFile } from 'node:fs/promises'
-import { ApiError, DeviceList, RunDetail, RunList } from '@nowait/shared'
+import { ApiError, AttemptPage, DeviceList, RunDetail, RunList } from '@nowait/shared'
 import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { db } from '../db/index.ts'
 import { devices, queue, results } from '../db/schema.ts'
-import { getRun, listRuns } from '../queue.ts'
+import { getRun, listAttempts, listRuns } from '../queue.ts'
 
 const Id = z.coerce.number().int()
 
@@ -22,6 +22,20 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { params: z.object({ id: Id }), response: { 200: RunDetail, 404: ApiError } } },
     async (req, reply) =>
       (await getRun(req.params.id)) ?? reply.code(404).send({ error: 'run not found' }),
+  )
+
+  app.get(
+    '/dashboard/api/runs/:id/attempts',
+    {
+      schema: {
+        params: z.object({ id: Id }),
+        querystring: z.object({ page: Id.min(0).default(0) }),
+        response: { 200: AttemptPage, 404: ApiError },
+      },
+    },
+    async (req, reply) =>
+      (await listAttempts(req.params.id, req.query.page)) ??
+      reply.code(404).send({ error: 'run not found' }),
   )
 
   // Every phone on every machine: bounded by the hardware, so not paged (R24 exception).
