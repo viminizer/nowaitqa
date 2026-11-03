@@ -1,63 +1,33 @@
-import { useEffect, useEffectEvent, useState } from 'react'
+import { QueryClient, useQuery } from '@tanstack/react-query'
 
 const REFRESH_MS = 5000
 
-export type ApiState<T> = { data?: T; error?: string }
+// No retries: polling refreshes anyway, and a 404 or a schema error fails the same way again.
+export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
-const always = () => true
-
-// Reads a dashboard API route, checks it with its shared schema (R5, R40), and reads it again every
-// few seconds while `keepPolling(data)` is true. A hidden tab waits, and loads as soon as it is
-// shown again. Pages start fresh through a `key` (R42). The browser sends the basic auth it asked
-// for when the page loaded.
-// ponytail: polling. Server-sent events if 5 s ever feels slow.
+// Reads a dashboard API route with TanStack Query, checks it with its shared schema (R5, R40), and
+// reads it again every few seconds until `keepPolling(data)` says no (a finished run); from then on
+// the data never goes stale. TanStack cancels the request when the page goes away, pauses polling in
+// a hidden tab, and refreshes when it is shown again. The browser sends the basic auth it asked for
+// when the page loaded.
 export function useApi<T>(
   path: string,
   schema: { parse: (data: unknown) => T },
-  keepPolling: (data: T) => boolean = always,
-): ApiState<T> {
-  const [state, setState] = useState<ApiState<T>>({})
-  // the latest schema and keepPolling, without restarting the effect when they are new functions
-  const parse = useEffectEvent((data: unknown) => schema.parse(data))
-  const shouldPoll = useEffectEvent((data: T) => keepPolling(data))
-
-  useEffect(() => {
-    const request = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let polling = true
-
-    async function load() {
-      clearTimeout(timer)
-      if (document.hidden) return // onVisible() loads when the tab is shown
-      try {
-        const res = await fetch(`/dashboard/api${path}`, { signal: request.signal })
-        if (!res.ok) {
-          // a proxy in front of the server may answer with HTML, not our JSON error
-          const body = await res.json().catch(() => null)
-          throw new Error(body?.error ?? `the server answered ${res.status}`)
-        }
-        const data = parse(await res.json())
-        setState({ data })
-        polling = shouldPoll(data)
-      } catch (err) {
-        if (request.signal.aborted) return
-        // keep the last data: a failed refresh shows an error above it
-        setState((s) => ({ ...s, error: (err as Error).message }))
+  keepPolling?: (data: T) => boolean,
+) {
+  const done = (data?: T) => data !== undefined && keepPolling?.(data) === false
+  return useQuery({
+    queryKey: [path],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/dashboard/api${path}`, { signal })
+      if (!res.ok) {
+        // a proxy in front of the server may answer with HTML, not our JSON error
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `the server answered ${res.status}`)
       }
-      if (polling && !request.signal.aborted) timer = setTimeout(load, REFRESH_MS)
-    }
-    const onVisible = () => {
-      if (!document.hidden && polling) load()
-    }
-
-    load()
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      request.abort()
-      clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [path])
-
-  return state
+      return schema.parse(await res.json())
+    },
+    refetchInterval: (query) => (done(query.state.data) ? false : REFRESH_MS),
+    staleTime: (query) => (done(query.state.data) ? Number.POSITIVE_INFINITY : 0),
+  })
 }
