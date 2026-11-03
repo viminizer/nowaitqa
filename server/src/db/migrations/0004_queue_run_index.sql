@@ -1,0 +1,1 @@
+CREATE INDEX "queue_run_idx" ON "queue" USING btree ("run_id","id");
