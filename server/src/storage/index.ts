@@ -34,8 +34,8 @@ const STORE_DOWN_AFTER = 3 // failures in a row: the store itself is down, not o
 // Deletes the artifacts of runs older than ARTIFACT_DAYS, found in the database, so it works the
 // same for every store. Files first, then the keys: if a delete fails, the run is found again next
 // time. One run that can't be deleted never stops the others (R51): they are tried in run order,
-// and the failures are reported together at the end. Several failures in a row mean the store
-// itself is down: then it stops, instead of waiting out every run's timeout.
+// and the failures are reported together at the end. After several failures in a row it checks the
+// store itself, and stops only when the store is down.
 export async function deleteOldArtifacts() {
   const failed: string[] = []
   let inARow = 0
@@ -65,8 +65,13 @@ export async function deleteOldArtifacts() {
         inARow = 0
       } catch (err) {
         failed.push(`run ${runId}: ${messageOf(err)}`)
+        // Several in a row: ask the store itself. Down: stop, instead of waiting out every run's
+        // timeout. Fine: these runs are bad on their own, so go on (they must not block the rest).
         if (++inARow >= STORE_DOWN_AFTER) {
-          throw new Error(`the store looks down, cleanup stopped: ${failed.at(-1)}`)
+          await store.check().catch((down) => {
+            throw new Error(`the store looks down, cleanup stopped: ${messageOf(down)}`)
+          })
+          inARow = 0
         }
       }
     }

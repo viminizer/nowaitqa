@@ -463,8 +463,9 @@ export async function submitResult(body: ResultBody) {
   const kept = (r: typeof screenshot) => (r.status === 'fulfilled' && r.value) || undefined
   // The test's own error stays the first line: chat shows the first line as the reason.
   const notes = failed.map(({ file }) => `(${file} not saved: the artifact store failed)`)
+  // || not ??: an empty error counts as none
   const testError =
-    body.error ?? (body.status === 'failed' && notes.length ? 'no error message' : '')
+    body.error || (body.status === 'failed' && notes.length ? 'no error message' : '')
   const error = [testError, ...notes].filter(Boolean).join('\n') || undefined
 
   const saved = await db.transaction(async (tx) => {
