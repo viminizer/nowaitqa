@@ -136,11 +136,22 @@ export async function createRun(body: CreateRunBody) {
 type Run = typeof runs.$inferSelect
 
 // When a lease taken or renewed now runs out.
-const leaseEnd = () => sql`now() + make_interval(secs => ${config.LEASE_SECONDS})`
+const leaseEnd = (seconds = config.LEASE_SECONDS) => sql`now() + make_interval(secs => ${seconds})`
 
-// How long a result's uploads can take: 2 files in parallel, each up to 30 s x 3 tries in the S3
-// client (storage/s3.ts). A result's lease is renewed for at least this long (R34).
-const UPLOAD_SECONDS = 120
+// A result's uploads get at most UPLOAD_SECONDS: past that a file counts as not saved (R50). Its
+// lease is renewed for longer than that, so the result is always recorded before the lease ends
+// (R34). The S3 client's own timeouts only catch idle sockets, so this limit is the real one.
+const UPLOAD_SECONDS = 100
+const RENEW_SECONDS = UPLOAD_SECONDS + 30
+
+// A promise that gives up after `ms` (the work itself may still finish in the background).
+function within<T>(ms: number, work: Promise<T>) {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`took more than ${ms / 1000} s`)), ms)
+  })
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer))
+}
 
 // A scenario's final status, from its latest attempt.
 function scenarioStatus(
@@ -439,10 +450,10 @@ export async function submitResult(body: ResultBody) {
   // The runner stops its heartbeat before it sends the result, so the lease is renewed here, for
   // the longer of a lease and the upload window: a slow upload must not let it run out and turn
   // this result into "lease expired" (R34).
-  const renewFor = Math.max(config.LEASE_SECONDS, UPLOAD_SECONDS)
+  const renewFor = Math.max(config.LEASE_SECONDS, RENEW_SECONDS)
   const [row] = await db
     .update(queue)
-    .set({ leaseUntil: sql`now() + make_interval(secs => ${renewFor})` })
+    .set({ leaseUntil: leaseEnd(renewFor) })
     .where(leasedHere)
     .returning()
   if (!row) return { saved: false, problems: [] }
@@ -451,10 +462,11 @@ export async function submitResult(body: ResultBody) {
   // A file that can't be stored never changes the result (R50): it is saved without it. The result
   // only says which file is missing (it shows on the dashboard and in chat); the store's own error,
   // which can name buckets and request ids, goes to the server log (`problems`).
+  const upload = (file: string, data: Buffer | string) =>
+    within(UPLOAD_SECONDS * 1000, saveArtifact(row.runId, file, data))
   const [screenshot, log] = await Promise.allSettled([
-    body.screenshot &&
-      saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64')),
-    body.log && saveArtifact(row.runId, `${name}.log`, body.log),
+    body.screenshot && upload(`${name}.png`, Buffer.from(body.screenshot, 'base64')),
+    body.log && upload(`${name}.log`, body.log),
   ])
   const failed = Object.entries({ screenshot, log }).flatMap(([file, r]) =>
     r.status === 'rejected' ? [{ file, why: messageOf(r.reason) }] : [],

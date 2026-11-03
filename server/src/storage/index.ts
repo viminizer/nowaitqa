@@ -69,7 +69,8 @@ export async function deleteOldArtifacts() {
         // timeout. Fine: these runs are bad on their own, so go on (they must not block the rest).
         if (++inARow >= STORE_DOWN_AFTER) {
           await store.check().catch((down) => {
-            throw new Error(`the store looks down, cleanup stopped: ${messageOf(down)}`)
+            const runs = failed.slice(0, 5).join('; ')
+            throw new Error(`the store looks down, cleanup stopped: ${messageOf(down)} (${runs})`)
           })
           inARow = 0
         }

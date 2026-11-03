@@ -22,7 +22,7 @@ export function every(
       failures++
       if (failures <= 3 || Date.now() - lastLog >= QUIET_MS) {
         lastLog = Date.now()
-        const quiet = failures === 3 ? '; logged at most hourly from now on' : ''
+        const quiet = failures === 3 && ms < QUIET_MS ? '; logged at most hourly from now on' : ''
         log.error(err, `${name} failed (${failures} in a row)${quiet}`)
       }
     }

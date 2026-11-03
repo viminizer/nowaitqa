@@ -44,7 +44,7 @@ const RETRY_HOURS = 24
 const LOG_EVERY = 240 // a run that keeps failing: logged on its first 3 failures, then hourly
 
 // How many times each run failed to send, per platform. In memory: a restart only logs again.
-const failures = new Map<string, number>()
+const failures = new Map<string, { count: number; first: number }>()
 
 async function buildReport(runId: number): Promise<RunReport | null> {
   const run = await getRun(runId)
@@ -94,8 +94,11 @@ async function turnedOnAt(name: string) {
   return row.since
 }
 
-async function sendDue(notifier: Notifier, log: FastifyBaseLogger) {
-  const since = await turnedOnAt(notifier.name)
+async function sendDue(notifier: Notifier, since: Date, log: FastifyBaseLogger) {
+  // a run past the retry window is not tried again: forget its failure count
+  for (const [key, entry] of failures) {
+    if (Date.now() - entry.first > RETRY_HOURS * 60 * 60 * 1000) failures.delete(key)
+  }
   // Newest first, so one run that keeps failing can't hold back the others.
   const due = await db
     .select({ id: runs.id })
@@ -127,12 +130,17 @@ async function sendDue(notifier: Notifier, log: FastifyBaseLogger) {
     } catch (err) {
       if (err instanceof PartialSendError) {
         log.error(err, `${notifier.name}: run ${id} sent, but not all of it`)
-        await markSent(id)
+        // a database error here must not skip the rest of the batch (R51)
+        await markSent(id).catch((dbErr) =>
+          log.error(dbErr, `${notifier.name}: run ${id} sent, but not marked as sent`),
+        )
         failures.delete(key)
         continue
       }
-      const count = (failures.get(key) ?? 0) + 1
-      failures.set(key, count)
+      const entry = failures.get(key) ?? { count: 0, first: Date.now() }
+      entry.count++
+      failures.set(key, entry)
+      const count = entry.count
       if (count <= 3 || count % LOG_EVERY === 0) {
         const again = `trying again every ${EVERY_MS / 1000}s for up to ${RETRY_HOURS}h`
         const quiet = count === 3 ? '; logged hourly from now on' : ''
@@ -150,9 +158,9 @@ async function sendDue(notifier: Notifier, log: FastifyBaseLogger) {
 // each one was turned on: now, not at the first tick, so a run that ends in between is news.
 export async function startNotifications(log: FastifyBaseLogger) {
   if (notifiers.length === 0) return
-  for (const notifier of notifiers) await turnedOnAt(notifier.name)
   log.info(`notifications on: ${notifiers.map((n) => n.name).join(', ')}`)
   for (const notifier of notifiers) {
-    every(EVERY_MS, `notifications to ${notifier.name}`, () => sendDue(notifier, log), log)
+    const since = await turnedOnAt(notifier.name) // read once: it never changes after this
+    every(EVERY_MS, `notifications to ${notifier.name}`, () => sendDue(notifier, since, log), log)
   }
 }
