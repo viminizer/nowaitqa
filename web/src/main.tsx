@@ -1,5 +1,7 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
+import { queryClient } from './api.ts'
 import { DevicesPage } from './DevicesPage.tsx'
 import { RunPage } from './RunPage.tsx'
 import { RunsPage } from './RunsPage.tsx'
@@ -35,7 +37,7 @@ function App() {
         </nav>
       </header>
       <main>
-        {/* the key: another page, run or `before` starts fresh, errors included (R42) */}
+        {/* the key: another page, run or `before` clears a render error (R42); data is cached by URL */}
         <ErrorBoundary key={`${path}?${query}`}>
           {runId ? (
             <RunPage id={Number(runId)} />
@@ -54,6 +56,8 @@ const root = document.getElementById('root')
 if (!root) throw new Error('index.html has no #root')
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 )
