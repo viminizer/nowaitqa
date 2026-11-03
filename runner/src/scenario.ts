@@ -23,6 +23,7 @@ export async function runScenario(
 
     await driver.getLogs(logType(device)) // drain old log lines, so the log holds only this scenario
     log(device.name, `run ${lease.runId}: ${lease.scenarioId} (attempt ${lease.attempt})`)
+    await closeNotRespondingDialog(driver, device)
     await withTimeout(scenario.run(driver, account(lease)), config.SCENARIO_TIMEOUT_SECONDS)
     return { ...result, status: 'passed', durationMs: Date.now() - started }
   } catch (err) {
@@ -41,6 +42,22 @@ function account(lease: Lease) {
   if (!lease.account) return null
   if (!config.TEST_ACCOUNT_PASSWORD) throw new Error('TEST_ACCOUNT_PASSWORD is not set')
   return { username: lease.account, password: config.TEST_ACCOUNT_PASSWORD }
+}
+
+// Android shows "<app> isn't responding" over every app when a system app hangs for a while (seen
+// on a slow emulator: "System UI isn't responding"). The scenario can't see the app under it, and
+// fails. Tap "Wait": the hung app goes on, the dialog goes away. A side step: a problem here is
+// only logged, and the scenario runs anyway (R50).
+async function closeNotRespondingDialog(driver: Browser, device: Device) {
+  if (device.platform !== 'android') return
+  try {
+    const wait = driver.$('android=new UiSelector().resourceId("android:id/aerr_wait")')
+    if (!(await wait.isExisting())) return // no waiting: most of the time there is no dialog
+    await wait.click()
+    log(device.name, 'closed an "isn\'t responding" dialog (tapped Wait)')
+  } catch (err) {
+    log(device.name, 'could not close an "isn\'t responding" dialog', err)
+  }
 }
 
 function logType(device: Device) {

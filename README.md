@@ -108,7 +108,8 @@ export default {
 } satisfies Scenario
 ```
 
-Each scenario starts from a fresh app (data cleared). The runner reads the folder at startup, so
+Each scenario starts from a fresh app (data cleared). If Android shows an "isn't responding"
+dialog over it, the runner taps Wait first. The runner reads the folder at startup, so
 restart it after you change the scenarios.
 
 [`examples/scenarios/`](examples/scenarios) is a sample folder to copy. It tests Appium's
