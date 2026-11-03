@@ -58,6 +58,7 @@ export const queue = pgTable(
   },
   (t) => [
     index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),
+    index('queue_run_idx').on(t.runId, t.id), // a run's attempts (dashboard, summaries)
     index('queue_leased_idx').on(t.device).where(sql`status = 'leased'`), // dashboard: busy phones
   ],
 )

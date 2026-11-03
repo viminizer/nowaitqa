@@ -22,14 +22,22 @@ function ErrorText({ error }: { error: string }) {
   )
 }
 
-// One page of the run's attempts, failures first (the server sorts them).
+// One page of the run's attempts. The server sorts them: failures first once the run is over.
 function Attempts({ runId, page }: { runId: number; page: number }) {
   const state = useApi(`/runs/${runId}/attempts?page=${page}`, AttemptPage, isRunRunning)
   return (
     <Loaded state={state}>
       {({ attempts, next }) =>
         attempts.length === 0 ? (
-          <p className="muted">{page > 0 ? 'No more attempts.' : 'No attempts yet.'}</p>
+          <p className="muted">
+            {page > 0 ? (
+              <>
+                No more attempts. <a href={`#/runs/${runId}`}>First page</a>
+              </>
+            ) : (
+              'No attempts yet.'
+            )}
+          </p>
         ) : (
           <>
             <div className="scroll">
@@ -91,10 +99,11 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
 
 export function RunPage({ id, page }: { id: number; page: number }) {
   const state = useApi(`/runs/${id}`, RunDetail, isRunning)
+  // the attempts load next to the summary, not after it
   return (
-    <Loaded state={state}>
-      {(run) => {
-        return (
+    <>
+      <Loaded state={state}>
+        {(run) => (
           <>
             <h1>
               Run #{run.id} <Status status={run.status} />
@@ -124,12 +133,11 @@ export function RunPage({ id, page }: { id: number; page: number }) {
 
             <h2>Phones</h2>
             <Timeline run={run} />
-
-            <h2>Attempts</h2>
-            <Attempts runId={run.id} page={page} />
           </>
-        )
-      }}
-    </Loaded>
+        )}
+      </Loaded>
+      <h2>Attempts</h2>
+      <Attempts runId={id} page={page} />
+    </>
   )
 }

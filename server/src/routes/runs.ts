@@ -16,7 +16,6 @@ export const runRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/runs/:id',
-    // RunSummary: the response drops the attempts, which only the dashboard needs
     {
       schema: {
         params: z.object({ id: z.coerce.number().int() }),

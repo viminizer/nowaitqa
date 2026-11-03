@@ -10,9 +10,24 @@ import {
   type ResultBody,
   type RunDetail,
   type RunList,
+  type RunSummary,
   type ScenarioStatus,
 } from '@nowait/shared'
-import { and, asc, desc, eq, inArray, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  lt,
+  ne,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
@@ -183,95 +198,114 @@ export async function listRuns(before?: number): Promise<RunList> {
 const attemptStatus = (queueStatus: QueueRow['status'], result: 'passed' | 'failed' | null) =>
   result ?? (queueStatus === 'leased' ? 'leased' : 'pending')
 
+// The small columns of an attempt: the timeline reads these, the attempts pages add the big ones.
+const attemptColumns = {
+  queueId: queue.id,
+  slot: queue.slot,
+  scenarioId: queue.scenarioId,
+  attempt: queue.attempt,
+  device: queue.device,
+  queueStatus: queue.status,
+  leasedAt: queue.leasedAt,
+  result: results.status,
+  finishedAt: results.createdAt,
+}
+
+// A run's summary (Jenkins polls it): each scenario's latest status, and each phone's busy time.
+export async function getRun(id: number): Promise<RunSummary | null> {
+  const run = await db.query.runs.findFirst({ where: eq(runs.id, id) })
+  return run ? summarize(run) : null
+}
+
+async function summarize(run: Run): Promise<RunSummary> {
+  // One row per scenario of the run (catalog x repeat): Jenkins needs them all, so not paged.
+  const latest = await db
+    .selectDistinctOn([queue.slot], {
+      scenarioId: queue.scenarioId,
+      attempt: queue.attempt,
+      result: results.status,
+    })
+    .from(queue)
+    .leftJoin(results, eq(results.queueId, queue.id))
+    .where(eq(queue.runId, run.id))
+    .orderBy(queue.slot, desc(queue.attempt))
+  // busy = holding a lease, from lease to result; summed by the database, one row per phone
+  const phones = await db
+    .select({
+      name: queue.device,
+      attempts: count(),
+      busyMs:
+        sql<number>`sum(extract(epoch from ${results.createdAt} - ${queue.leasedAt}) * 1000)`.mapWith(
+          Number,
+        ),
+    })
+    .from(queue)
+    .innerJoin(results, eq(results.queueId, queue.id))
+    .where(and(eq(queue.runId, run.id), isNotNull(queue.leasedAt)))
+    .groupBy(queue.device)
+    .orderBy(queue.device)
+
+  const durationMs = runDuration(run)
+  return {
+    ...run,
+    durationMs,
+    scenarios: latest.map((a) => ({
+      id: a.scenarioId,
+      status: scenarioStatus(run, a.attempt, a.result),
+    })),
+    devices: phones.flatMap(({ name, attempts, busyMs }) => {
+      if (!name) return []
+      const busy = Math.round(busyMs)
+      return [
+        { name, attempts, busyMs: busy, idleMs: durationMs === null ? null : durationMs - busy },
+      ]
+    }),
+  }
+}
+
 const TIMELINE_LIMIT = 1000
 
-// A run's summary and timeline. Reads every attempt of the run, but only the small columns: the
-// error text and files come a page at a time from listAttempts().
-export async function getRun(id: number): Promise<RunDetail | null> {
-  // now: the database clock, the same as every timestamp below
+// A run for its dashboard page: the summary, the database clock, and the first TIMELINE_LIMIT
+// attempts in the order phones took them (R24). The attempts themselves come from listAttempts().
+export async function getRunDetail(id: number): Promise<RunDetail | null> {
+  // now: the database clock, the same as every timestamp
   const [found] = await db
     .select({ run: runs, now: sql<Date>`now()`.mapWith(runs.createdAt) })
     .from(runs)
     .where(eq(runs.id, id))
   if (!found) return null
-  const { run, now } = found
 
-  const rows = await db
-    .select({
-      queueId: queue.id,
-      slot: queue.slot,
-      scenarioId: queue.scenarioId,
-      attempt: queue.attempt,
-      device: queue.device,
-      queueStatus: queue.status,
-      leasedAt: queue.leasedAt,
-      result: results.status,
-      finishedAt: results.createdAt,
-    })
+  const taken = await db
+    .select(attemptColumns)
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
-    .where(eq(queue.runId, id))
-    .orderBy(asc(queue.id))
+    .where(and(eq(queue.runId, id), isNotNull(queue.leasedAt)))
+    .orderBy(asc(queue.leasedAt), asc(queue.id))
+    .limit(TIMELINE_LIMIT + 1) // one more tells if the timeline is cut
 
-  const durationMs = runDuration(run)
-  const bySlot = new Map<number, { id: string; status: ScenarioStatus }>()
-  const byDevice = new Map<string, { attempts: number; busyMs: number }>()
-
-  for (const a of rows) {
-    // attempts are in order: the latest decides
-    bySlot.set(a.slot, { id: a.scenarioId, status: scenarioStatus(run, a.attempt, a.result) })
-
-    if (a.device && a.leasedAt && a.finishedAt) {
-      const stats = byDevice.get(a.device) ?? { attempts: 0, busyMs: 0 }
-      stats.attempts++
-      stats.busyMs += a.finishedAt.getTime() - a.leasedAt.getTime()
-      byDevice.set(a.device, stats)
-    }
-  }
-
-  const taken = rows
-    .flatMap((a) => (a.leasedAt ? [{ ...a, leasedAt: a.leasedAt }] : []))
-    .sort((a, b) => a.leasedAt.getTime() - b.leasedAt.getTime())
   return {
-    ...run,
-    durationMs,
-    now,
-    timeline: taken.slice(0, TIMELINE_LIMIT).map((a) => ({
-      queueId: a.queueId,
-      scenarioId: a.scenarioId,
-      attempt: a.attempt,
-      device: a.device,
-      status: attemptStatus(a.queueStatus, a.result),
-      leasedAt: a.leasedAt,
-      finishedAt: a.finishedAt,
+    ...(await summarize(found.run)),
+    now: found.now,
+    timeline: taken.slice(0, TIMELINE_LIMIT).map(({ slot, queueStatus, result, ...a }) => ({
+      ...a,
+      status: attemptStatus(queueStatus, result),
     })),
     timelineCut: taken.length > TIMELINE_LIMIT,
-    scenarios: [...bySlot.values()],
-    devices: [...byDevice].map(([name, s]) => ({
-      name,
-      ...s,
-      idleMs: durationMs === null ? null : durationMs - s.busyMs,
-    })),
   }
 }
 
 const ATTEMPTS_PAGE = 50
 
-// One page of a run's attempts with their errors and files, failures first (R24).
+// One page of a run's attempts with their errors and files (R24). A finished run lists failures
+// first. A running one lists them in queue order: its statuses still change, and a moving order
+// would shift rows between pages.
 export async function listAttempts(runId: number, page: number): Promise<AttemptPage | null> {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
   if (!run) return null
+  const failuresFirst = sql`case when ${results.status} = 'failed' then 0 else 1 end`
   const rows = await db
     .select({
-      queueId: queue.id,
-      slot: queue.slot,
-      scenarioId: queue.scenarioId,
-      attempt: queue.attempt,
-      device: queue.device,
-      queueStatus: queue.status,
-      leasedAt: queue.leasedAt,
-      result: results.status,
-      finishedAt: results.createdAt,
+      ...attemptColumns,
       durationMs: results.durationMs,
       error: results.error,
       screenshot: results.screenshot,
@@ -280,12 +314,7 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, runId))
-    .orderBy(
-      // failures first: they are what people open a run for
-      sql`case when ${results.status} = 'failed' then 0 when ${queue.status} = 'leased' then 1
-        when ${queue.status} = 'pending' then 2 else 3 end`,
-      asc(queue.id),
-    )
+    .orderBy(...(run.status === 'running' ? [] : [failuresFirst]), asc(queue.id))
     .limit(ATTEMPTS_PAGE + 1) // one more tells if there is a next page
     .offset(page * ATTEMPTS_PAGE)
 
