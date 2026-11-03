@@ -1,6 +1,17 @@
 // API contract between the server, the runner and Jenkins. Both sides import these schemas (R5).
 import { z } from 'zod'
 
+// A row id from the request. Postgres ids and ints are 4 bytes: a bigger number is a 400 here, not
+// a 500 from the database (R47).
+const INT4_MAX = 2_147_483_647
+export const DbId = z.number().int().positive().max(INT4_MAX)
+// the same, from a URL path or query: digits only, so one row has one URL (not 0x10 or 1e1)
+export const DbIdParam = z
+  .string()
+  .regex(/^\d+$/, 'must be a whole number')
+  .transform(Number)
+  .pipe(DbId)
+
 export const Platform = z.enum(['android', 'ios'])
 export type Platform = z.infer<typeof Platform>
 
@@ -9,7 +20,7 @@ export const Device = z.object({
   platform: Platform,
   udid: z.string().min(1),
   appiumUrl: z.url(),
-  systemPort: z.number().int().positive(), // systemPort (Android) or wdaLocalPort (iOS)
+  systemPort: z.number().int().positive().max(65_535), // systemPort (Android) or wdaLocalPort (iOS)
   host: z.string().min(1), // which machine the phone is plugged into
   enabled: z.boolean().default(true),
 })
@@ -44,7 +55,7 @@ export type CreateRunBody = z.infer<typeof CreateRunBody>
 export const LeaseBody = z.object({
   device: z.string().min(1),
   commits: z.array(Commit).min(1),
-  runId: z.number().int().optional(),
+  runId: DbId.optional(),
 })
 
 export const Lease = z.object({
@@ -59,13 +70,13 @@ export const Lease = z.object({
 })
 export type Lease = z.infer<typeof Lease>
 
-export const HeartbeatBody = z.object({ queueId: z.number().int(), device: z.string().min(1) })
+export const HeartbeatBody = z.object({ queueId: DbId, device: z.string().min(1) })
 
 export const ResultBody = z.object({
-  queueId: z.number().int(),
+  queueId: DbId,
   device: z.string().min(1),
   status: z.enum(['passed', 'failed']),
-  durationMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative().max(INT4_MAX),
   error: z.string().optional(),
   screenshot: z.base64().optional(), // PNG, as WebdriverIO's takeScreenshot() returns it
   log: z.string().optional(),

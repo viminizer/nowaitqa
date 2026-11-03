@@ -21,9 +21,10 @@ export function useApi<T>(
     queryFn: async ({ signal }) => {
       const res = await fetch(`/dashboard/api${path}`, { signal })
       if (!res.ok) {
-        // a proxy in front of the server may answer with HTML, not our JSON error
+        // a proxy in front of the server may answer with HTML, not our JSON error; a 400 from
+        // input checks has the reason in `message`
         const body = await res.json().catch(() => null)
-        throw new Error(body?.error ?? `the server answered ${res.status}`)
+        throw new Error(body?.message ?? body?.error ?? `the server answered ${res.status}`)
       }
       return schema.parse(await res.json())
     },

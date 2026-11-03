@@ -451,6 +451,9 @@ export async function submitResult(body: ResultBody) {
 
 // A lease that ran out means the worker died: count it as a failed attempt.
 export async function expireLeases() {
+  // A lease that ran out while the server was down is not dead: its runner gets one lease time
+  // to heartbeat again before it counts.
+  if (process.uptime() < config.LEASE_SECONDS) return
   const expired = await db.transaction(async (tx) => {
     const rows = await tx
       .update(queue)
@@ -471,6 +474,9 @@ export async function expireLeases() {
 // open items, so nobody waits forever. Slow runs, and runs waiting behind others, keep going.
 // ponytail: scans the queue's history every minute; add an index on leased_at if it gets slow.
 export async function expireRuns() {
+  // Time the server was down is not "no progress": phones need STUCK_RUN_MINUTES of uptime to
+  // come back before a run can count as stuck.
+  if (process.uptime() < config.STUCK_RUN_MINUTES * 60) return
   await db.transaction(async (tx) => {
     const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
     const stuck = await tx.execute<{ id: number; platform: string }>(sql`
