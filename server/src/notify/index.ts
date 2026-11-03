@@ -10,6 +10,7 @@ import { notifications, notifiersOn, queue, results, runs } from '../db/schema.t
 import { getRun } from '../queue.ts'
 import { type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { slackNotifier } from './slack.ts'
+import { telegramNotifier } from './telegram.ts'
 
 // Add a platform here: it is on when its settings are set.
 const notifiers: Notifier[] = [
@@ -22,14 +23,29 @@ const notifiers: Notifier[] = [
         }),
       ]
     : []),
+  ...(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID
+    ? [
+        telegramNotifier({
+          token: config.TELEGRAM_BOT_TOKEN,
+          chatId: config.TELEGRAM_CHAT_ID,
+          runsTopic: config.TELEGRAM_RUNS_TOPIC,
+          errorsTopic: config.TELEGRAM_ERRORS_TOPIC,
+          apiUrl: config.TELEGRAM_API_URL,
+        }),
+      ]
+    : []),
 ]
 
 const REPORT_LIMIT = 10 // failures and flaky ids per message
 const BATCH = 10 // runs per platform per tick
 const EVERY_MS = 15_000
 const RETRY_HOURS = 24
+const LOG_EVERY = 240 // a run that keeps failing: logged on its first 3 failures, then hourly
 
-export async function buildReport(runId: number): Promise<RunReport | null> {
+// How many times each run failed to send, per platform. In memory: a restart only logs again.
+const failures = new Map<string, number>()
+
+async function buildReport(runId: number): Promise<RunReport | null> {
   const run = await getRun(runId)
   if (!run) return null
   // the latest attempt of each scenario; a scenario of a finished run failed when that one did
@@ -101,34 +117,45 @@ async function sendDue(notifier: Notifier, log: FastifyBaseLogger) {
     db.insert(notifications).values({ runId: id, notifier: notifier.name })
 
   for (const { id } of due) {
+    const key = `${notifier.name}:${id}`
     try {
       const report = await buildReport(id)
       if (report) await notifier.runFinished(report)
       await markSent(id)
+      failures.delete(key)
     } catch (err) {
       if (err instanceof PartialSendError) {
         log.error(err, `${notifier.name}: run ${id} sent, but not all of it`)
         await markSent(id)
-      } else {
-        const again = `trying again in ${EVERY_MS / 1000}s, for up to ${RETRY_HOURS}h`
-        log.error(err, `${notifier.name}: could not send run ${id}, ${again}`)
+        failures.delete(key)
+        continue
+      }
+      const count = (failures.get(key) ?? 0) + 1
+      failures.set(key, count)
+      if (count <= 3 || count % LOG_EVERY === 0) {
+        const again = `trying again every ${EVERY_MS / 1000}s for up to ${RETRY_HOURS}h`
+        const quiet = count === 3 ? '; logged hourly from now on' : ''
+        log.error(
+          err,
+          `${notifier.name}: could not send run ${id} (${count} tries), ${again}${quiet}`,
+        )
       }
     }
   }
 }
 
-// Starts the job when a platform is set up, and records when each one was first turned on (now,
-// not at the first tick: a run that ends in between is news). Each tick starts after the last one
-// ends, so a slow platform never sends a run twice.
+// Starts one job per platform that is set up, so a slow or rate-limited platform never holds back
+// another. It first records when each one was turned on (now, not at the first tick: a run that
+// ends in between is news). Each tick starts after the last one ends, so a run is never sent twice.
 export async function startNotifications(log: FastifyBaseLogger) {
   if (notifiers.length === 0) return
   for (const notifier of notifiers) await turnedOnAt(notifier.name)
   log.info(`notifications on: ${notifiers.map((n) => n.name).join(', ')}`)
-  const tick = async () => {
-    for (const notifier of notifiers) {
+  for (const notifier of notifiers) {
+    const tick = async () => {
       await sendDue(notifier, log).catch((err) => log.error(err, `${notifier.name} failed`))
+      setTimeout(tick, EVERY_MS)
     }
     setTimeout(tick, EVERY_MS)
   }
-  setTimeout(tick, EVERY_MS)
 }

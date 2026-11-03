@@ -1,6 +1,6 @@
-// The one interface every chat platform implements. Kevin asked for it so Telegram and other
-// platforms can be added next to Slack; it has one implementation until then (R13, on purpose).
-// A platform only formats and sends: what to send, when, and retries live in notify/index.ts.
+// The one interface every chat platform implements (Slack, Telegram; Kevin asked for it so more
+// can be added the same way). A platform only formats and sends: what to send and when live in
+// notify/index.ts, and the HTTP retry and screenshot fallback in notify/http.ts.
 import type { RunSummary, ScenarioStatus } from '@nowait/shared'
 
 // A finished run, the same for every platform.

@@ -156,7 +156,6 @@ export const TimelineBlock = Attempt.pick({
   leasedAt: true,
   finishedAt: true,
 })
-export type TimelineBlock = z.infer<typeof TimelineBlock>
 
 // A run for its dashboard page. now: the database clock, the same one as every timestamp, so a
 // running run's timeline never mixes clocks. timeline: the first TIMELINE_LIMIT blocks in the order
