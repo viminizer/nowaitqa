@@ -41,7 +41,7 @@ export async function sendScreenshot(
   try {
     const data = await readArtifact(key)
     if (!data) return { sent: false, reason: 'the file is gone' }
-    png = Buffer.from(data)
+    png = data
   } catch (err) {
     return { sent: false, reason: `the file can't be read (${(err as Error).message})` }
   }

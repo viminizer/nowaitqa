@@ -52,10 +52,13 @@ const parsed = Env.refine((env) => !env.SLACK_BOT_TOKEN === !env.SLACK_CHANNEL, 
     path: ['S3_SECRET_ACCESS_KEY'],
   })
   // S3 settings without a bucket are a typo somewhere: say so instead of using the disk
-  .refine((env) => env.S3_BUCKET || !(env.S3_ENDPOINT || env.S3_ACCESS_KEY_ID), {
-    message: 'S3 settings are set, but S3_BUCKET is not',
-    path: ['S3_BUCKET'],
-  })
+  .refine(
+    (env) => env.S3_BUCKET || !(env.S3_ENDPOINT || env.S3_ACCESS_KEY_ID || process.env.S3_REGION),
+    {
+      message: 'S3 settings are set, but S3_BUCKET is not',
+      path: ['S3_BUCKET'],
+    },
+  )
   // a topic without the bot is a typo somewhere: say so instead of staying silent
   .refine(
     (env) => env.TELEGRAM_BOT_TOKEN || !(env.TELEGRAM_RUNS_TOPIC || env.TELEGRAM_ERRORS_TOPIC),

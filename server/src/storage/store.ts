@@ -7,7 +7,7 @@ export interface ArtifactStore {
   check(): Promise<void>
   save(key: string, data: Buffer | string): Promise<void>
   // null when it is gone (deleted after ARTIFACT_DAYS, or by hand)
-  read(key: string): Promise<Buffer | null>
+  read(key: string): Promise<Buffer<ArrayBuffer> | null>
   // every artifact of one run
   deleteRun(runId: number): Promise<void>
 }

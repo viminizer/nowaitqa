@@ -23,6 +23,14 @@ export function s3Store({ bucket, region, endpoint, accessKeyId, secretAccessKey
     region,
     endpoint,
     forcePathStyle: Boolean(endpoint), // RustFS and MinIO serve buckets as /bucket/key
+    // The SDK adds CRC checksums by default; some S3-compatible stores refuse them. Off AWS, only
+    // send them where the API requires them.
+    ...(endpoint
+      ? {
+          requestChecksumCalculation: 'WHEN_REQUIRED' as const,
+          responseChecksumValidation: 'WHEN_REQUIRED' as const,
+        }
+      : {}),
     ...(accessKeyId && secretAccessKey ? { credentials: { accessKeyId, secretAccessKey } } : {}),
     // a store that does not answer must not hang a result upload or the dashboard
     requestHandler: { connectionTimeout: 5_000, requestTimeout: 30_000 },
@@ -49,9 +57,15 @@ export function s3Store({ bucket, region, endpoint, accessKeyId, secretAccessKey
     async read(key) {
       try {
         const object = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
-        return object.Body ? Buffer.from(await object.Body.transformToByteArray()) : null
+        if (!object.Body) return null
+        const bytes = await object.Body.transformToByteArray()
+        return Buffer.from(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength) // no copy
       } catch (err) {
-        if ((err as Error).name === 'NoSuchKey') return null
+        // 404 by status too: not every S3-compatible store names it NoSuchKey. A 403 stays an
+        // error: it means the keys or the policy are wrong, not that the file is gone.
+        const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata
+          ?.httpStatusCode
+        if ((err as Error).name === 'NoSuchKey' || status === 404) return null
         throw err
       }
     },

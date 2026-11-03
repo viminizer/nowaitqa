@@ -50,6 +50,13 @@
       "when": 1793681940503,
       "tag": "0006_notifiers_on",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793693040871,
+      "tag": "0007_artifact_keys",
+      "breakpoints": true
     }
   ]
 }

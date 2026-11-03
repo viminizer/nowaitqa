@@ -421,26 +421,33 @@ export async function heartbeat(queueId: number, device: string) {
 
 // Returns false when the lease is no longer this device's (it expired and the scenario moved on).
 export async function submitResult(body: ResultBody) {
-  const saved = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .update(queue)
-      .set({ status: 'done' })
-      .where(
-        and(eq(queue.id, body.queueId), eq(queue.device, body.device), eq(queue.status, 'leased')),
-      )
-      .returning()
-    if (!row) return false
+  const leasedHere = and(
+    eq(queue.id, body.queueId),
+    eq(queue.device, body.device),
+    eq(queue.status, 'leased'),
+  )
+  // The files go up before the transaction: S3 is network I/O, and a transaction must not hold a
+  // connection and the row lock while it waits. A result for a lease that is gone uploads nothing.
+  const row = await db.query.queue.findFirst({ where: leasedHere })
+  if (!row) return false
+  // The slot keeps names apart when a scenario repeats in one run.
+  const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
+  const [screenshot, log] = await Promise.all([
+    body.screenshot &&
+      saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64')),
+    body.log && saveArtifact(row.runId, `${name}.log`, body.log),
+  ])
 
-    // The slot keeps names apart when a scenario repeats in one run.
-    const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
-    await recordAttempt(tx, row, {
+  const saved = await db.transaction(async (tx) => {
+    // the lease may have run out while the files went up
+    const [done] = await tx.update(queue).set({ status: 'done' }).where(leasedHere).returning()
+    if (!done) return false
+    await recordAttempt(tx, done, {
       status: body.status,
       durationMs: body.durationMs,
       error: body.error,
-      screenshot:
-        body.screenshot &&
-        (await saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64'))),
-      log: body.log && (await saveArtifact(row.runId, `${name}.log`, body.log)),
+      screenshot: screenshot || undefined,
+      log: log || undefined,
     })
     return true
   })

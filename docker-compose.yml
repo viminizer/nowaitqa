@@ -12,13 +12,16 @@ services:
 
   # S3-compatible storage to test the s3 artifact store: docker compose --profile s3 up -d
   rustfs:
-    image: rustfs/rustfs:latest
+    # 1.0.0-beta.8, the version tested (the image has no version label, so pinned by digest)
+    image: rustfs/rustfs@sha256:bdfbef958f7161ce88cbefd4763e146f652cc650a9d1920564cdd337ec1a63ee
     profiles: [s3]
     environment:
       RUSTFS_ACCESS_KEY: nowait-test
       RUSTFS_SECRET_KEY: nowait-test-secret
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "9000:9000"
+      - "9000:9000" # S3 API
+      - "9001:9001" # console: create the bucket at http://localhost:9001
     volumes:
       - rustfsdata:/data
 

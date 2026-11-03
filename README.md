@@ -154,10 +154,11 @@ is behind one interface, `ArtifactStore` (`server/src/storage/store.ts`):
 - On the server's disk, under `ARTIFACT_DIR`. The default.
 - In S3, when `S3_BUCKET` is set. Any S3-compatible service works: AWS S3, or RustFS / MinIO with
   `S3_ENDPOINT`. The bucket must exist; the server checks it at startup and stops if it can't use
-  it.
+  it. A bucket lifecycle rule that deletes objects after `ARTIFACT_DAYS` is a good safety net: the
+  server's cleanup only knows the files its database points to.
 
 To try S3 locally with RustFS: `docker compose --profile s3 up -d`, create a bucket (in the RustFS
-console or with any S3 tool), then start the server with `S3_BUCKET`,
+console at http://localhost:9001, or with any S3 tool), then start the server with `S3_BUCKET`,
 `S3_ENDPOINT=http://localhost:9000`, `S3_ACCESS_KEY_ID=nowait-test` and
 `S3_SECRET_ACCESS_KEY=nowait-test-secret`.
 

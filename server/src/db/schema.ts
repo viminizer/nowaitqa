@@ -40,7 +40,10 @@ export const runs = pgTable(
     finishedAt: timestamp({ withTimezone: true }),
   },
   // notifications: finished runs by when they finished
-  (t) => [index('runs_finished_idx').on(t.finishedAt).where(sql`status <> 'running'`)],
+  (t) => [
+    index('runs_finished_idx').on(t.finishedAt).where(sql`status <> 'running'`), // notifications
+    index('runs_created_idx').on(t.createdAt), // artifact cleanup: runs older than ARTIFACT_DAYS
+  ],
 )
 
 // One row per attempt of one scenario. A retry is a new row with attempt + 1 and the same slot.
@@ -90,7 +93,10 @@ export const results = pgTable(
     log: text(), // artifact key
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('results_device_idx').on(t.device, t.createdAt)], // dashboard: a phone's last work
+  (t) => [
+    index('results_device_idx').on(t.device, t.createdAt), // dashboard: a phone's last work
+    index('results_run_idx').on(t.runId), // a run's results (artifact cleanup)
+  ],
 )
 
 // The scenario list a runner sent, per git commit of its scenario folder. Runs are filled from it.
