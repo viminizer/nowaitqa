@@ -1,6 +1,6 @@
 import { DeviceList } from '@nowait/shared'
 import { useApi } from './api.ts'
-import { Loaded, Status, time } from './ui.tsx'
+import { Action, Loaded, Status, time } from './ui.tsx'
 
 export function DevicesPage() {
   const state = useApi('/devices', DeviceList)
@@ -24,6 +24,9 @@ export function DevicesPage() {
                     <th>Platform</th>
                     <th>Machine</th>
                     <th>UDID</th>
+                    <th>
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -48,6 +51,14 @@ export function DevicesPage() {
                       <td>{d.host}</td>
                       <td>
                         <code>{d.udid}</code>
+                      </td>
+                      <td>
+                        {/* off: it finishes its current scenario, then takes no more */}
+                        <Action
+                          label={d.enabled ? 'Turn off' : 'Turn on'}
+                          path={`/devices/${encodeURIComponent(d.name)}/enabled`}
+                          body={{ enabled: !d.enabled }}
+                        />
                       </td>
                     </tr>
                   ))}

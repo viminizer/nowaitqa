@@ -210,3 +210,18 @@ export const DeviceList = z.object({
   ),
 })
 export type DeviceList = z.infer<typeof DeviceList>
+
+// --- dashboard actions ---
+
+// A new run's id (POST /runs, and "run again" on the dashboard).
+export const CreatedRun = z.object({ id: DbId })
+
+// Turn a phone on or off. A phone that is off takes no new work.
+export const DeviceEnabledBody = z.object({ enabled: z.boolean() })
+
+// Run a finished run again: all its scenarios, or only the failed ones.
+export const RunAgainBody = z.object({ failedOnly: z.boolean() })
+
+// Dashboard actions must send this header. Another site's page can't add it without asking the
+// server first (CORS), so it can't use the password the browser keeps.
+export const ACTION_HEADER = 'x-nowait-action'

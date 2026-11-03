@@ -1,9 +1,17 @@
-import { QueryClient, useQuery } from '@tanstack/react-query'
+import { ACTION_HEADER } from '@nowait/shared'
+import { QueryClient, useMutation, useQuery } from '@tanstack/react-query'
 
 const REFRESH_MS = 5000
 
 // No retries: polling refreshes anyway, and a 404 or a schema error fails the same way again.
 export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+// The reason a request failed. A proxy in front of the server may answer with HTML, not our JSON
+// error; a 400 from input checks has the reason in `message`.
+async function failure(res: Response) {
+  const body = await res.json().catch(() => null)
+  return new Error(body?.message ?? body?.error ?? `the server answered ${res.status}`)
+}
 
 // Reads a dashboard API route with TanStack Query, checks it with its shared schema (R5, R40), and
 // reads it again every few seconds until `keepPolling(data)` says no (a finished run); from then on
@@ -20,15 +28,27 @@ export function useApi<T>(
     queryKey: [path],
     queryFn: async ({ signal }) => {
       const res = await fetch(`/dashboard/api${path}`, { signal })
-      if (!res.ok) {
-        // a proxy in front of the server may answer with HTML, not our JSON error; a 400 from
-        // input checks has the reason in `message`
-        const body = await res.json().catch(() => null)
-        throw new Error(body?.message ?? body?.error ?? `the server answered ${res.status}`)
-      }
+      if (!res.ok) throw await failure(res)
       return schema.parse(await res.json())
     },
     refetchInterval: (query) => (done(query.state.data) ? false : REFRESH_MS),
     staleTime: (query) => (done(query.state.data) ? Number.POSITIVE_INFINITY : 0),
+  })
+}
+
+// Posts a dashboard action, then reloads every page's data, since an action can change any of it.
+// Resolves with the answer's JSON (null for 204).
+export function useAction() {
+  return useMutation({
+    mutationFn: async ({ path, body = {} }: { path: string; body?: object }) => {
+      const res = await fetch(`/dashboard/api${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [ACTION_HEADER]: '1' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await failure(res)
+      return res.status === 204 ? null : ((await res.json()) as unknown)
+    },
+    onSuccess: () => queryClient.invalidateQueries(),
   })
 }

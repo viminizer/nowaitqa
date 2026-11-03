@@ -4,6 +4,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { db } from '../db/index.ts'
 import { devices } from '../db/schema.ts'
+import { releaseFixedItems } from '../queue.ts'
 
 export const deviceRoutes: FastifyPluginAsyncZod = async (app) => {
   // The runner asks for the phones on its machine. Bounded by the phones one machine can hold, so
@@ -20,6 +21,7 @@ export const deviceRoutes: FastifyPluginAsyncZod = async (app) => {
         .values(req.body)
         .onConflictDoUpdate({ target: devices.name, set: req.body })
         .returning()
+      if (device && !device.enabled) await releaseFixedItems(device.name)
       return device
     } catch (err) {
       // Drizzle wraps the Postgres error; 23505 = unique value already taken.

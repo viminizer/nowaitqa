@@ -1,7 +1,7 @@
 import { type Attempt, AttemptPage, countStatuses, RunDetail } from '@nowait/shared'
 import { useApi } from './api.ts'
 import { Timeline } from './Timeline.tsx'
-import { Counts, duration, Loaded, Status, time } from './ui.tsx'
+import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.tsx'
 
 // A finished run does not change any more.
 const isRunning = (run: RunDetail) => run.status === 'running'
@@ -27,7 +27,7 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
   const state = useApi(`/runs/${runId}/attempts?page=${page}`, AttemptPage, isRunRunning)
   return (
     <Loaded state={state}>
-      {({ attempts, next }) =>
+      {({ attempts, next, runStatus }) =>
         attempts.length === 0 ? (
           <p className="muted">
             {page > 0 ? (
@@ -61,6 +61,14 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                       </td>
                       <td>
                         <Status status={a.status} />
+                        {/* a running run retries on its own */}
+                        {a.status === 'failed' && runStatus !== 'running' && (
+                          <Action
+                            label="Run again"
+                            path={`/attempts/${a.queueId}/again`}
+                            onDone={openRun}
+                          />
+                        )}
                       </td>
                       <td>{a.device ?? '-'}</td>
                       <td>{duration(a.durationMs)}</td>
@@ -109,6 +117,32 @@ export function RunPage({ id, page }: { id: number; page: number }) {
       <Loaded state={state}>
         {(run) => (
           <>
+            <p className="actions">
+              {isRunning(run) ? (
+                <Action
+                  label="Cancel run"
+                  path={`/runs/${id}/cancel`}
+                  ask={`Cancel run #${id}? Its open scenarios fail.`}
+                />
+              ) : (
+                <>
+                  <Action
+                    label="Run again"
+                    path={`/runs/${id}/again`}
+                    body={{ failedOnly: false }}
+                    onDone={openRun}
+                  />
+                  {run.scenarios.some((s) => s.status === 'failed') && (
+                    <Action
+                      label="Run failed again"
+                      path={`/runs/${id}/again`}
+                      body={{ failedOnly: true }}
+                      onDone={openRun}
+                    />
+                  )}
+                </>
+              )}
+            </p>
             <dl className="facts">
               <dt>Scenarios</dt>
               <dd>

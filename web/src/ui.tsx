@@ -1,7 +1,8 @@
 // Pieces every page uses, so the same thing looks the same everywhere.
-import { formatDuration } from '@nowait/shared'
+import { CreatedRun, formatDuration } from '@nowait/shared'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Component, type ReactNode } from 'react'
+import { useAction } from './api.ts'
 
 // Loading, error, and the data. A failed refresh keeps the last data and shows the error on top.
 export function Loaded<T>({
@@ -72,6 +73,45 @@ export function Counts({ counts }: { counts: Record<string, number> }) {
       ))}
     </span>
   )
+}
+
+// A button that changes something on the server. It asks first when `ask` is set, and shows the
+// error next to it. onDone gets the answer (a new run's id, for "run again").
+export function Action({
+  label,
+  path,
+  body,
+  ask,
+  onDone,
+}: {
+  label: string
+  path: string
+  body?: object
+  ask?: string
+  onDone?: (answer: unknown) => void
+}) {
+  const action = useAction()
+  const run = () => {
+    if (ask && !confirm(ask)) return
+    action.mutate({ path, body }, { onSuccess: onDone })
+  }
+  return (
+    <span className="action">
+      <button type="button" disabled={action.isPending} onClick={run}>
+        {label}
+      </button>
+      {action.error && (
+        <span className="error" role="alert">
+          {action.error.message}
+        </span>
+      )}
+    </span>
+  )
+}
+
+// After "run again": the new run's page.
+export const openRun = (answer: unknown) => {
+  location.hash = `#/runs/${CreatedRun.parse(answer).id}`
 }
 
 export const duration = (ms: number | null) => (ms === null ? '-' : formatDuration(ms))
