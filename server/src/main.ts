@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import fastifyStatic from '@fastify/static'
+import { ACTION_HEADER } from '@nowait/shared'
 import Fastify from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { config } from './config.ts'
@@ -42,11 +43,18 @@ app.addHook('onRequest', async (req, reply) => {
   // Decided by the matched route, not the raw URL (/%64ashboard matches the same route). An unknown
   // /dashboard URL still asks for the password, then answers 404.
   if ((route ?? req.url).startsWith('/dashboard')) {
-    if (isDashboardPassword(given)) return
-    return reply
-      .code(401)
-      .header('www-authenticate', 'Basic realm="nowait-qa"')
-      .send({ error: 'unauthorized' })
+    if (!isDashboardPassword(given)) {
+      return reply
+        .code(401)
+        .header('www-authenticate', 'Basic realm="nowait-qa"')
+        .send({ error: 'unauthorized' })
+    }
+    // An action needs ACTION_HEADER: a form on another site could post here with the password
+    // the browser keeps, but it can't add a header.
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers[ACTION_HEADER] !== '1') {
+      return reply.code(403).send({ error: `dashboard actions need the ${ACTION_HEADER} header` })
+    }
+    return
   }
   if (matches(given, `Bearer ${config.RUNNER_TOKEN}`)) return
   if (!matches(given, `Bearer ${config.TRIGGER_TOKEN}`)) {

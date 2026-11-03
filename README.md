@@ -140,8 +140,17 @@ pnpm --filter @nowait/web build   # once, and after every change in web/
 
 Build it before you start the server: the server looks for it at startup. It then serves it at
 `http://localhost:3000/dashboard/`. The browser asks for a user name
-(any) and `DASHBOARD_PASSWORD`. It is read-only, and refreshes every 5 seconds (a finished run's
-page stops).
+(any) and `DASHBOARD_PASSWORD`. It refreshes every 5 seconds (a finished run's page stops).
+
+It can also:
+- **Turn a phone off or on.** A phone that is off finishes its current scenario, then takes no
+  more. Its items in a `fixed` run go to the other phones.
+- **Cancel a running run.** Its open scenarios fail with "cancelled on the dashboard", and a phone
+  running one stops at its next heartbeat.
+- **Run a finished run again:** all its scenarios, only the failed ones, or one failed attempt.
+  This starts a new run with the same app build, commit and split; the old run keeps its results.
+
+Each action is written to the server log.
 
 To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
 `http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.

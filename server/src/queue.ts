@@ -97,27 +97,30 @@ export async function createRun(body: CreateRunBody) {
     throw new BadRunError(`no ${body.platform} scenarios at commit ${catalog.commit}`)
   }
   const items = Array.from({ length: body.repeat }, () => scenarioIds).flat()
+  return insertRun({ ...body, commit: catalog.commit }, items)
+}
 
+type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'>
+
+// Saves a run and queues its items (scenario ids, in order), then wakes waiting phones.
+async function insertRun(newRun: NewRun, items: string[]) {
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
   const phones =
-    body.split === 'fixed'
+    newRun.split === 'fixed'
       ? (
           await db
             .select({ name: devices.name })
             .from(devices)
-            .where(and(eq(devices.platform, body.platform), eq(devices.enabled, true)))
+            .where(and(eq(devices.platform, newRun.platform), eq(devices.enabled, true)))
             .orderBy(asc(devices.name))
         ).map((d) => d.name)
       : []
-  if (body.split === 'fixed' && phones.length === 0) {
-    throw new BadRunError(`no enabled ${body.platform} phones to split the run across`)
+  if (newRun.split === 'fixed' && phones.length === 0) {
+    throw new BadRunError(`no enabled ${newRun.platform} phones to split the run across`)
   }
 
   const runId = await db.transaction(async (tx) => {
-    const [run] = await tx
-      .insert(runs)
-      .values({ ...body, commit: catalog.commit })
-      .returning({ id: runs.id })
+    const [run] = await tx.insert(runs).values(newRun).returning({ id: runs.id })
     if (!run) throw new Error('run insert returned nothing')
     await tx.insert(queue).values(
       items.map((scenarioId, slot) => ({
@@ -236,8 +239,9 @@ export async function getRun(id: number): Promise<RunSummary | null> {
   return run ? summarize(run) : null
 }
 
-async function summarize(run: Run): Promise<RunSummary> {
-  // One row per scenario of the run (catalog x repeat): Jenkins needs them all, so not paged.
+// Each scenario of the run (catalog x repeat), in order, with its status from its latest attempt.
+// Jenkins needs them all, so not paged.
+async function scenariosOf(run: Run) {
   const latest = await db
     .selectDistinctOn([queue.slot], {
       scenarioId: queue.scenarioId,
@@ -248,6 +252,10 @@ async function summarize(run: Run): Promise<RunSummary> {
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, run.id))
     .orderBy(queue.slot, desc(queue.attempt))
+  return latest.map((a) => ({ id: a.scenarioId, status: scenarioStatus(run, a.attempt, a.result) }))
+}
+
+async function summarize(run: Run): Promise<RunSummary> {
   // busy = holding a lease, from lease to result; summed by the database, one row per phone
   const phones = await db
     .select({
@@ -268,10 +276,7 @@ async function summarize(run: Run): Promise<RunSummary> {
   return {
     ...run,
     durationMs,
-    scenarios: latest.map((a) => ({
-      id: a.scenarioId,
-      status: scenarioStatus(run, a.attempt, a.result),
-    })),
+    scenarios: await scenariosOf(run),
     devices: phones.flatMap(({ name, attempts, busyMs }) => {
       if (!name) return []
       const busy = Math.round(busyMs)
@@ -374,7 +379,12 @@ export async function leaseNext(
           eq(queue.status, 'pending'),
           eq(runs.platform, device.platform),
           inArray(runs.commit, commits), // only runs whose scenarios this runner has
-          or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
+          // a fixed split's item is its phone's, or anyone's once that phone is off
+          or(
+            isNull(queue.assignedDevice),
+            eq(queue.assignedDevice, device.name),
+            sql`not exists (select 1 from ${devices} d where d.name = ${queue.assignedDevice} and d.enabled)`,
+          ),
         ),
       )
       .orderBy(desc(sql`${queue.runId} = ${currentRunId}`), asc(queue.runId), asc(queue.id))
@@ -538,16 +548,102 @@ export async function expireRuns() {
           WHERE r2.platform = r.platform
             AND (q.status = 'leased' OR q.leased_at > ${cutoff} OR res.created_at > ${cutoff}))`)
     for (const run of stuck.rows) {
-      const open = await tx
-        .update(queue)
-        .set({ status: 'done' })
-        .where(and(eq(queue.runId, run.id), ne(queue.status, 'done')))
-        .returning()
       const error = `stuck: no ${run.platform} phone took or finished any work for ${config.STUCK_RUN_MINUTES} minutes`
-      for (const row of open) await saveResult(tx, row, { status: 'failed', durationMs: 0, error })
-      await finishRunIfDone(tx, run.id)
+      await closeRun(tx, run.id, error)
     }
   })
+}
+
+// Fails every open item of a run with `error`, and finishes the run. A phone that holds one of
+// them finds its lease gone at its next heartbeat, and stops.
+async function closeRun(tx: Tx, runId: number, error: string) {
+  // Again until none is left: a result saved while this ran can queue a retry this update missed.
+  while (true) {
+    const open = await tx
+      .update(queue)
+      .set({ status: 'done' })
+      .where(and(eq(queue.runId, runId), ne(queue.status, 'done')))
+      .returning()
+    if (open.length === 0) break
+    for (const row of open) await saveResult(tx, row, { status: 'failed', durationMs: 0, error })
+  }
+  await finishRunIfDone(tx, runId)
+}
+
+// --- dashboard actions -----------------------------------------------------------------------
+
+// Stops a running run: its open items fail with "cancelled". False when it is already finished.
+export async function cancelRun(runId: number) {
+  const cancelled = await db.transaction(async (tx) => {
+    // No lock on the run here: queue rows first, then the run (in finishRunIfDone), the same order
+    // as a result being saved, or the two could deadlock. Two cancels at once both answer 204.
+    const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId))
+    if (!run) return null
+    if (run.status !== 'running') return false
+    await closeRun(tx, runId, 'cancelled on the dashboard')
+    return true
+  })
+  if (cancelled) notifyWork() // freed accounts
+  return cancelled
+}
+
+// A finished run, started again as a new run with the same build, commit and split. The old run
+// keeps its results (chat and Jenkins already have them).
+async function startAgain(run: Run, scenarioIds: string[], trigger: string) {
+  if (run.status === 'running') throw new BadRunError(`run #${run.id} is still running`)
+  if (scenarioIds.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
+  // Phones only take runs on their runner's newest scenario commit or the one before (catalog.ts).
+  // ponytail: the 2 newest catalogs stand for that; per-runner commits if runners drift apart.
+  const recent = await db
+    .select({ commit: catalogs.commit })
+    .from(catalogs)
+    .orderBy(desc(catalogs.updatedAt))
+    .limit(2)
+  if (!recent.some((c) => c.commit === run.commit)) {
+    throw new BadRunError(
+      `the runners no longer have the scenarios of commit ${run.commit.slice(0, 7)}: start a new run instead`,
+    )
+  }
+  const { platform, appBuild, commit, split } = run
+  return insertRun({ platform, appBuild, commit, split, trigger }, scenarioIds)
+}
+
+// All of a run's scenarios (repeats too), or only the failed ones. Null when there is no such run.
+export async function runAgain(runId: number, failedOnly: boolean) {
+  const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
+  if (!run) return null
+  const scenarios = await scenariosOf(run)
+  const ids = scenarios.filter((s) => !failedOnly || s.status === 'failed').map((s) => s.id)
+  const what = failedOnly ? 'failed scenarios' : 'all scenarios'
+  return startAgain(run, ids, `dashboard: ${what} of run #${runId}`)
+}
+
+// One failed attempt's scenario, as a new run. Null when there is no such attempt.
+export async function retryAttempt(queueId: number) {
+  const [found] = await db
+    .select({ run: runs, scenarioId: queue.scenarioId, result: results.status })
+    .from(queue)
+    .innerJoin(runs, eq(runs.id, queue.runId))
+    .leftJoin(results, eq(results.queueId, queue.id))
+    .where(eq(queue.id, queueId))
+  if (!found) return null
+  if (found.result !== 'failed') throw new BadRunError('only a failed attempt can run again')
+  const trigger = `dashboard: ${found.scenarioId} of run #${found.run.id}`
+  return startAgain(found.run, [found.scenarioId], trigger)
+}
+
+// Turns a phone on or off. A phone that is off finishes its current attempt and takes no more,
+// and the other phones take its items in a fixed split. False when there is no such phone.
+export async function setDeviceEnabled(name: string, enabled: boolean) {
+  const [device] = await db
+    .update(devices)
+    .set({ enabled })
+    .where(eq(devices.name, name))
+    .returning({ name: devices.name })
+  if (!device) return false
+  // its items in a fixed split are now anyone's (leaseNext): waiting phones look again
+  if (!enabled) notifyWork()
+  return true
 }
 
 type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {
