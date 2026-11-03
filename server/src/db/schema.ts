@@ -86,8 +86,8 @@ export const results = pgTable(
     status: text({ enum: ['passed', 'failed'] }).notNull(),
     durationMs: integer().notNull(),
     error: text(),
-    screenshot: text(), // file path under ARTIFACT_DIR
-    log: text(), // file path under ARTIFACT_DIR
+    screenshot: text(), // artifact key (storage/), like "5/views.checkbox-0-1.png"
+    log: text(), // artifact key
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('results_device_idx').on(t.device, t.createdAt)], // dashboard: a phone's last work

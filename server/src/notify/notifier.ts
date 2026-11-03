@@ -17,7 +17,7 @@ export type Failure = {
   scenarioId: string
   device: string | null
   error: string | null
-  screenshot: string | null // file path on the server; may be gone after ARTIFACT_DAYS
+  screenshot: string | null // artifact key (storage/); may be gone after ARTIFACT_DAYS
 }
 
 // The main message went out, but some details did not. The run counts as sent (sending it again

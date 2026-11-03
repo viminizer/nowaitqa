@@ -1,5 +1,4 @@
 // Read-only routes for the dashboard (web/). The browser signs in with basic auth (see main.ts).
-import { readFile } from 'node:fs/promises'
 import { ApiError, AttemptPage, DbIdParam, DeviceList, RunDetail, RunList } from '@nowait/shared'
 import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
@@ -7,6 +6,7 @@ import { z } from 'zod'
 import { db } from '../db/index.ts'
 import { devices, queue, results } from '../db/schema.ts'
 import { getRunDetail, listAttempts, listRuns } from '../queue.ts'
+import { readArtifact } from '../storage/index.ts'
 
 export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
@@ -69,7 +69,7 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     }
   })
 
-  // An attempt's screenshot or log. The path comes from the database, never from the URL.
+  // An attempt's screenshot or log. The key comes from the database, never from the URL.
   app.get(
     '/dashboard/api/attempts/:queueId/:file',
     { schema: { params: z.object({ queueId: DbIdParam, file: z.enum(['screenshot', 'log']) }) } },
@@ -77,12 +77,9 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       const result = await db.query.results.findFirst({
         where: eq(results.queueId, req.params.queueId),
       })
-      const path = result?.[req.params.file]
-      if (!path) return reply.code(404).send({ error: 'no such file' })
-      const data = await readFile(path).catch((err) => {
-        if (err.code === 'ENOENT') return null // deleted after ARTIFACT_DAYS
-        throw err
-      })
+      const key = result?.[req.params.file]
+      if (!key) return reply.code(404).send({ error: 'no such file' })
+      const data = await readArtifact(key)
       if (!data) return reply.code(404).send({ error: 'the file was deleted' })
       return reply
         .type(req.params.file === 'screenshot' ? 'image/png' : 'text/plain; charset=utf-8')

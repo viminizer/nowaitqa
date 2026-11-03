@@ -10,5 +10,18 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # S3-compatible storage to test the s3 artifact store: docker compose --profile s3 up -d
+  rustfs:
+    image: rustfs/rustfs:latest
+    profiles: [s3]
+    environment:
+      RUSTFS_ACCESS_KEY: nowait-test
+      RUSTFS_SECRET_KEY: nowait-test-secret
+    ports:
+      - "9000:9000"
+    volumes:
+      - rustfsdata:/data
+
 volumes:
   pgdata:
+  rustfsdata:

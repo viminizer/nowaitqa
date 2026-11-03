@@ -28,10 +28,10 @@ import {
   or,
   sql,
 } from 'drizzle-orm'
-import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
 import { accounts, catalogs, devices, queue, results, runs } from './db/schema.ts'
+import { saveArtifact } from './storage/index.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type QueueRow = typeof queue.$inferSelect

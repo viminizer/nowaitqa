@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 import fastifyStatic from '@fastify/static'
 import Fastify from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
-import { deleteOldArtifacts } from './artifacts.ts'
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
 import { startNotifications } from './notify/index.ts'
@@ -13,6 +12,7 @@ import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
 import { runRoutes } from './routes/runs.ts'
 import { workRoutes } from './routes/work.ts'
+import { deleteOldArtifacts, store } from './storage/index.ts'
 
 const app = Fastify({ logger: true, bodyLimit: 20 * 1024 * 1024 }) // results carry screenshots
 app.setValidatorCompiler(validatorCompiler)
@@ -71,6 +71,13 @@ if (existsSync(WEB_DIST)) {
 }
 
 await runMigrations()
+
+// The artifact store must work before results arrive: stop now with a clear message if not.
+await store.check().catch((err) => {
+  app.log.fatal(err.message)
+  process.exit(1)
+})
+app.log.info(`artifacts are kept in: ${store.name}`)
 
 // First, so a run that the jobs below finish is news to a platform turned on just now.
 await startNotifications(app.log)
