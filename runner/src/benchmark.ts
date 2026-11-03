@@ -1,7 +1,6 @@
 // Runs the same scenarios twice - fixed split (the old way), then the shared queue - and prints
 // how long each took and how long each phone sat idle. The runner must be running.
 //   pnpm --filter @nowait/runner benchmark --app <apk path or URL> [--repeat 10] [--platform android]
-import { execFileSync } from 'node:child_process'
 import { parseArgs } from 'node:util'
 import type { RunSummary } from '@nowait/shared'
 import { createRun, getRun } from './api.ts'
@@ -17,13 +16,11 @@ if (!values.app) throw new Error('--app is required: path or URL of the app buil
 if (values.platform !== 'android' && values.platform !== 'ios') {
   throw new Error('--platform must be android or ios')
 }
-const commit = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim()
 
 async function runAndWait(split: 'fixed' | 'queue'): Promise<RunSummary> {
   const id = await createRun({
     platform: values.platform as 'android' | 'ios',
     appBuild: values.app as string,
-    commit,
     trigger: 'benchmark',
     split,
     repeat: Number(values.repeat),

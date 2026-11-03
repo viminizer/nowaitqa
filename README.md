@@ -34,6 +34,7 @@ Every request needs `Authorization: Bearer <token>`, except `GET /health`. There
 | `GET /runs/:id`      | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
 | `PUT /devices`       | you          | Add or change a phone (runner token)                               |
 | `GET /devices?host=` | runner       | The phones plugged into one machine                                |
+| `PUT /catalog`       | runner       | Send its scenario list and their git commit (at startup)           |
 | `POST /lease`        | runner       | Take the next scenario. Waits up to 30s if there is none           |
 | `POST /heartbeat`    | runner       | Keep a lease alive while a scenario runs                           |
 | `POST /results`      | runner       | Report pass or fail, with a screenshot and a log                   |
@@ -63,11 +64,14 @@ up new phones within a minute.
 
 ## Scenarios
 
-Scenarios live in your own folder or repo, not in nowait-qa. Point `SCENARIOS_DIR` (runner and
-server) at it. Without it, both use the samples in `examples/scenarios/`. Use an absolute path: a
-relative one is read from the folder the process starts in (`server/` or `runner/` with
-`pnpm --filter`). The folder must be inside a git checkout: a run names a commit, and the runner
-refuses to run a scenario from a different one.
+Scenarios live in your own folder or repo, not in nowait-qa. Point the runner's `SCENARIOS_DIR` at
+it. Without it, the runner uses the samples in `examples/scenarios/`. Use an absolute path: a
+relative one is read from the folder the process starts in (`runner/` with `pnpm --filter`).
+
+The folder must be inside a git checkout. At startup the runner sends the server its scenario list
+and their git commit. The server never reads test files: a run takes its scenarios from the list
+of the commit it names (`commit` in `POST /runs`, short is fine), or from the newest list. Only
+runners on that commit take its work.
 
 One file per scenario, directly in the folder. The file name is the scenario id. Sub-folders
 (helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`, installed from GitHub
@@ -116,8 +120,7 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
 the build. It starts a run for the new APK and, by default, waits for it and fails the build if
 the tests fail (`WAIT_FOR_RESULT`). Its timeout (90 minutes) must be longer than your slowest run.
-It runs the scenarios from the latest `main` of your scenarios repo (`SCENARIOS_REPO`), so keep the
-runner's `SCENARIOS_DIR` on `main`.
+It runs the scenarios the runner sent last. Restart the runner after you pull new scenarios.
 
 Jenkins needs a "Secret text" credential `nowait-trigger-token` with the server's `TRIGGER_TOKEN`,
 and the test machine must be able to download the APK from Jenkins.

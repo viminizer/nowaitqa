@@ -1,6 +1,6 @@
 // Runs one leased scenario on one phone and turns the outcome into a result for the server.
 import { execFileSync } from 'node:child_process'
-import type { Device, Lease, ResultBody } from '@nowait/shared'
+import type { Catalog, Device, Lease, ResultBody } from '@nowait/shared'
 import { loadScenarios } from '@nowait-qa/sdk'
 import type { Browser } from 'webdriverio'
 import { config } from './config.ts'
@@ -12,6 +12,12 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: config.SCENARIOS_
   .toString()
   .trim()
 
+// What the runner tells the server it can run. The server only leases it work from this commit.
+export const catalog: Catalog = {
+  commit: head,
+  scenarios: [...scenarios.values()].map(({ id, platforms }) => ({ id, platforms })),
+}
+
 export async function runScenario(
   driver: Browser,
   device: Device,
@@ -21,10 +27,6 @@ export async function runScenario(
   const result = { queueId: lease.queueId, device: device.name }
 
   try {
-    // Old or new test code would give misleading results.
-    if (!head.startsWith(lease.commit)) {
-      throw new Error(`runner is on commit ${head}, but the run needs ${lease.commit}`)
-    }
     const scenario = scenarios.get(lease.scenarioId)
     if (!scenario) throw new Error(`scenario ${lease.scenarioId} not found on this runner`)
 

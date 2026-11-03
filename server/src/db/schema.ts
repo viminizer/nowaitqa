@@ -1,5 +1,15 @@
+import type { Catalog } from '@nowait/shared'
 import { sql } from 'drizzle-orm'
-import { boolean, index, integer, pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core'
 
 export const devices = pgTable('devices', {
   name: text().primaryKey(),
@@ -67,6 +77,13 @@ export const results = pgTable('results', {
   screenshot: text(), // file path under ARTIFACT_DIR
   log: text(), // file path under ARTIFACT_DIR
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+})
+
+// The scenario list a runner sent, per git commit of its scenario folder. Runs are filled from it.
+export const catalogs = pgTable('catalogs', {
+  commit: text().primaryKey(),
+  scenarios: jsonb().$type<Catalog['scenarios']>().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
 
 // Test account pool. An account is busy while the queue row it points to is leased.

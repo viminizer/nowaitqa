@@ -1,12 +1,11 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
-import type { CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
-import { loadScenarios } from '@nowait-qa/sdk'
-import { and, asc, desc, eq, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import type { Catalog, CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
+import { and, asc, desc, eq, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
-import { accounts, devices, queue, results, runs } from './db/schema.ts'
+import { accounts, catalogs, devices, queue, results, runs } from './db/schema.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type QueueRow = typeof queue.$inferSelect
@@ -37,13 +36,39 @@ export function waitForWork(ms: number) {
 
 // --- runs ------------------------------------------------------------------------------------
 
+export async function saveCatalog(catalog: Catalog) {
+  await db
+    .insert(catalogs)
+    .values(catalog)
+    .onConflictDoUpdate({
+      target: catalogs.commit,
+      set: { scenarios: catalog.scenarios, updatedAt: sql`now()` },
+    })
+}
+
 export class BadRunError extends Error {}
 
 export async function createRun(body: CreateRunBody) {
-  const scenarioIds = (await loadScenarios(config.SCENARIOS_DIR))
+  // The run's commit (a short one works, like git), or the newest catalog a runner sent.
+  const [catalog] = await db
+    .select()
+    .from(catalogs)
+    .where(body.commit ? like(catalogs.commit, `${body.commit}%`) : undefined)
+    .orderBy(desc(catalogs.updatedAt))
+    .limit(1)
+  if (!catalog) {
+    throw new BadRunError(
+      body.commit
+        ? `no runner has sent its scenarios for commit ${body.commit}`
+        : 'no runner has sent its scenarios yet',
+    )
+  }
+  const scenarioIds = catalog.scenarios
     .filter((s) => s.platforms.includes(body.platform))
     .map((s) => s.id)
-  if (scenarioIds.length === 0) throw new BadRunError(`no scenarios for ${body.platform}`)
+  if (scenarioIds.length === 0) {
+    throw new BadRunError(`no ${body.platform} scenarios at commit ${catalog.commit}`)
+  }
   const items = Array.from({ length: body.repeat }, () => scenarioIds).flat()
 
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
@@ -62,7 +87,10 @@ export async function createRun(body: CreateRunBody) {
   }
 
   const runId = await db.transaction(async (tx) => {
-    const [run] = await tx.insert(runs).values(body).returning({ id: runs.id })
+    const [run] = await tx
+      .insert(runs)
+      .values({ ...body, commit: catalog.commit })
+      .returning({ id: runs.id })
     if (!run) throw new Error('run insert returned nothing')
     await tx.insert(queue).values(
       items.map((scenarioId, slot) => ({
@@ -139,7 +167,11 @@ export async function getRun(id: number): Promise<RunSummary | null> {
 
 export class UnknownDeviceError extends Error {}
 
-export async function leaseNext(deviceName: string, currentRunId = 0): Promise<Lease | null> {
+export async function leaseNext(
+  deviceName: string,
+  commit: string,
+  currentRunId = 0,
+): Promise<Lease | null> {
   return db.transaction(async (tx) => {
     const device = await tx.query.devices.findFirst({
       where: and(eq(devices.name, deviceName), eq(devices.enabled, true)),
@@ -156,6 +188,7 @@ export async function leaseNext(deviceName: string, currentRunId = 0): Promise<L
         and(
           eq(queue.status, 'pending'),
           eq(runs.platform, device.platform),
+          eq(runs.commit, commit), // only runs whose scenarios this runner has
           or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
         ),
       )

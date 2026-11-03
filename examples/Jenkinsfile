@@ -4,7 +4,7 @@
 //
 // Needs in Jenkins:
 // - a "Secret text" credential with id 'nowait-trigger-token' holding the server's TRIGGER_TOKEN
-// - curl and git on the agent
+// - curl on the agent
 pipeline {
   agent any
 
@@ -18,7 +18,6 @@ pipeline {
 
   environment {
     NOWAIT_URL = 'http://qa-server:3000' // the nowait-qa server
-    SCENARIOS_REPO = 'https://github.com/viminizer/nowaitqa.git' // the repo with your scenarios
     // Appium on the test machine downloads the APK from here, so the test machine must be able
     // to reach this URL without logging in to Jenkins.
     APK_URL = "${env.BUILD_URL}artifact/app/build/outputs/apk/debug/app-debug.apk"
@@ -40,12 +39,10 @@ pipeline {
           withCredentials([string(credentialsId: 'nowait-trigger-token', variable: 'NOWAIT_TOKEN')]) {
             sh '''
               set -eu
-              # The scenarios to run: the latest main of the scenarios repo. The runner must be on it too.
-              COMMIT=$(git ls-remote "$SCENARIOS_REPO" refs/heads/main | cut -f1)
-
+              # No commit: the run uses the scenarios the runner sent last. Add "commit" to pin one.
               RUN=$(curl -sf -X POST "$NOWAIT_URL/runs" \
                 -H "Authorization: Bearer $NOWAIT_TOKEN" -H "Content-Type: application/json" \
-                -d "{\\"platform\\":\\"android\\",\\"appBuild\\":\\"$APK_URL\\",\\"commit\\":\\"$COMMIT\\",\\"trigger\\":\\"jenkins $JOB_NAME #$BUILD_NUMBER\\"}")
+                -d "{\\"platform\\":\\"android\\",\\"appBuild\\":\\"$APK_URL\\",\\"trigger\\":\\"jenkins $JOB_NAME #$BUILD_NUMBER\\"}")
               RUN_ID=$(echo "$RUN" | sed 's/.*"id":\\([0-9]*\\).*/\\1/')
               echo "nowait-qa run $RUN_ID started"
               [ "$WAIT_FOR_RESULT" = true ] || exit 0

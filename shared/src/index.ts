@@ -15,10 +15,20 @@ export const Device = z.object({
 })
 export type Device = z.infer<typeof Device>
 
+// A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
+const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
+
+// The scenarios a runner has, and the git commit of its scenario folder. Sent when it starts.
+export const Catalog = z.object({
+  commit: Commit,
+  scenarios: z.array(z.object({ id: z.string().min(1), platforms: z.array(Platform).min(1) })),
+})
+export type Catalog = z.infer<typeof Catalog>
+
 export const CreateRunBody = z.object({
   platform: Platform,
   appBuild: z.string().min(1), // URL or path of the APK / IPA
-  commit: z.string().min(1), // git commit of the scenarios to run
+  commit: Commit.optional(), // the scenarios' commit; default: the newest catalog a runner sent
   trigger: z.string().default('manual'),
   // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
   // (the old way, kept to compare against in the benchmark).
@@ -27,9 +37,14 @@ export const CreateRunBody = z.object({
 })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
+// commit: the runner's scenario commit; the phone only gets work from runs on it.
 // runId: the run the phone has a session for. That run's work comes first, so the phone does not
 // switch apps back and forth between runs.
-export const LeaseBody = z.object({ device: z.string().min(1), runId: z.number().int().optional() })
+export const LeaseBody = z.object({
+  device: z.string().min(1),
+  commit: Commit,
+  runId: z.number().int().optional(),
+})
 
 export const Lease = z.object({
   queueId: z.number().int(),

@@ -1,10 +1,22 @@
 // The runner's only way to reach the outside world: the server's HTTP API (R4).
-import { type CreateRunBody, Device, Lease, type ResultBody, RunSummary } from '@nowait/shared'
+import {
+  type Catalog,
+  type CreateRunBody,
+  Device,
+  Lease,
+  type ResultBody,
+  RunSummary,
+} from '@nowait/shared'
 import { z } from 'zod'
 import { config } from './config.ts'
 
 // Throws on any status the caller does not expect, with the server's message.
-async function call(method: 'GET' | 'POST', path: string, expected: number[], body?: unknown) {
+async function call(
+  method: 'GET' | 'POST' | 'PUT',
+  path: string,
+  expected: number[],
+  body?: unknown,
+) {
   const res = await fetch(new URL(path, config.SERVER_URL), {
     method,
     headers: { authorization: `Bearer ${config.RUNNER_TOKEN}`, 'content-type': 'application/json' },
@@ -14,6 +26,10 @@ async function call(method: 'GET' | 'POST', path: string, expected: number[], bo
     throw new Error(`${method} ${path} -> ${res.status} ${await res.text()}`)
   }
   return res
+}
+
+export async function sendCatalog(catalog: Catalog) {
+  await call('PUT', '/catalog', [204], catalog)
 }
 
 export async function getDevices() {
@@ -34,8 +50,8 @@ export async function getRun(id: number) {
 export class DeviceGoneError extends Error {}
 
 // Waits up to 30s on the server. null = no work right now.
-export async function lease(device: string, runId?: number) {
-  const res = await call('POST', '/lease', [200, 204, 404], { device, runId })
+export async function lease(device: string, commit: string, runId?: number) {
+  const res = await call('POST', '/lease', [200, 204, 404], { device, commit, runId })
   if (res.status === 404) throw new DeviceGoneError(`device ${device} is unknown or disabled`)
   if (res.status === 204) return null
   return Lease.parse(await res.json())
