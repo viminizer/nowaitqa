@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -93,6 +94,19 @@ export const catalogs = pgTable('catalogs', {
   scenarios: jsonb().$type<Catalog['scenarios']>().notNull(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
+
+// Which finished runs each chat platform has sent (notify/index.ts). A missing row = not sent yet.
+export const notifications = pgTable(
+  'notifications',
+  {
+    runId: integer()
+      .notNull()
+      .references(() => runs.id),
+    notifier: text().notNull(), // Notifier.name, like 'slack'
+    sentAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.notifier] })],
+)
 
 // Test account pool. An account is busy while the queue row it points to is leased.
 // Passwords are not stored here: the runner reads them from its env.

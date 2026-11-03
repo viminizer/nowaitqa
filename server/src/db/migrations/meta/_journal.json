@@ -36,6 +36,13 @@
       "when": 1793679119484,
       "tag": "0004_queue_run_index",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793680314759,
+      "tag": "0005_notifications",
+      "breakpoints": true
     }
   ]
 }
