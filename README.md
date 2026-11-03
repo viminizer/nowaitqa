@@ -150,7 +150,8 @@ When a run ends, the server posts it to chat: one message with the result, and e
 scenario (error and screenshot) in its thread, up to 10. Every platform implements the same
 `Notifier` interface (`server/src/notify/notifier.ts`), so adding one is a new file plus one line
 in `server/src/notify/index.ts`. A run is sent once per platform; if the platform is down, the
-server tries again every 15 seconds for an hour.
+server tries again every 15 seconds for a day. Runs that ended before a platform was first turned
+on are not sent.
 
 Slack: create a Slack app with a bot token (`chat:write`, `files:write`), add it to the channel,
 and set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL`. Set `PUBLIC_URL` to link each message to its run
