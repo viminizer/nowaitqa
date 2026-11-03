@@ -2,8 +2,9 @@
 import type { Device, Lease } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { DeviceGoneError, heartbeat, lease, sendResult } from './api.ts'
+import { commits } from './catalog.ts'
 import { log } from './log.ts'
-import { catalog, runScenario } from './scenario.ts'
+import { runScenario } from './scenario.ts'
 
 type Session = { driver: Browser; runId: number; appId: string }
 
@@ -19,7 +20,7 @@ export async function runWorker(device: Device) {
     let current: Lease | null = null
     let stopHeartbeat = () => {}
     try {
-      current = await lease(device.name, catalog.commit, session?.runId)
+      current = await lease(device.name, commits(), session?.runId)
       if (!current) continue
       // From the moment we hold the lease: a first app install can take minutes.
       // If the lease is gone, ending the Appium session stops the scenario at its next command.

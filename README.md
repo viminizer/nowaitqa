@@ -73,6 +73,16 @@ and their git commit. The server never reads test files: a run takes its scenari
 of the commit it names (`commit` in `POST /runs`, short is fine), or from the newest list. Only
 runners on that commit take its work.
 
+The runner reads `SCENARIOS_DIR` once, so restart it after you pull. Or let the runner pull:
+
+- `SCENARIOS_REPO`: git URL of your scenarios repo. A private repo uses the machine's git login.
+- `SCENARIOS_BRANCH`: default `main`.
+- `SCENARIOS_DIR`: required here. An empty folder the runner owns.
+
+Every minute the runner fetches the branch. When it moved, the runner checks the new commit out
+into its own folder, runs `pnpm install` if it has a `pnpm-lock.yaml`, and sends the new list to
+the server. Runs started on the previous commit still finish.
+
 One file per scenario, directly in the folder. The file name is the scenario id. Sub-folders
 (helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`, installed from GitHub
 (it is not on npm). It needs pnpm, because npm cannot install a package from a sub-folder of a repo:
@@ -120,7 +130,7 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
 the build. It starts a run for the new APK and, by default, waits for it and fails the build if
 the tests fail (`WAIT_FOR_RESULT`). Its timeout (90 minutes) must be longer than your slowest run.
-It runs the scenarios the runner sent last. Restart the runner after you pull new scenarios.
+It runs the scenarios the runner sent last.
 
 Jenkins needs a "Secret text" credential `nowait-trigger-token` with the server's `TRIGGER_TOKEN`,
 and the test machine must be able to download the APK from Jenkins.

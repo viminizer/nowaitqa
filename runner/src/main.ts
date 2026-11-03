@@ -1,8 +1,9 @@
-// Starts one worker per enabled phone on this machine, and picks up new phones every minute.
-import { getDevices, sendCatalog } from './api.ts'
+// Loads the scenarios, starts one worker per enabled phone on this machine, and picks up new
+// phones every minute.
+import { getDevices } from './api.ts'
+import { startScenarios } from './catalog.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
-import { catalog } from './scenario.ts'
 import { runWorker } from './worker.ts'
 
 const running = new Set<string>()
@@ -18,8 +19,7 @@ async function startNewWorkers() {
 }
 
 log(config.HOST, `runner starting, server ${config.SERVER_URL}`)
-await sendCatalog(catalog)
-log(config.HOST, `sent ${catalog.scenarios.length} scenarios at commit ${catalog.commit}`)
+await startScenarios()
 await startNewWorkers()
 setInterval(
   () => startNewWorkers().catch((err) => log(config.HOST, 'could not refresh devices', err)),

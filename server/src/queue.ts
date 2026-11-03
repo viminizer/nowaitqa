@@ -1,7 +1,7 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
 import type { Catalog, CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
-import { and, asc, desc, eq, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
@@ -169,7 +169,7 @@ export class UnknownDeviceError extends Error {}
 
 export async function leaseNext(
   deviceName: string,
-  commit: string,
+  commits: string[],
   currentRunId = 0,
 ): Promise<Lease | null> {
   return db.transaction(async (tx) => {
@@ -188,7 +188,7 @@ export async function leaseNext(
         and(
           eq(queue.status, 'pending'),
           eq(runs.platform, device.platform),
-          eq(runs.commit, commit), // only runs whose scenarios this runner has
+          inArray(runs.commit, commits), // only runs whose scenarios this runner has
           or(isNull(queue.assignedDevice), eq(queue.assignedDevice, device.name)),
         ),
       )

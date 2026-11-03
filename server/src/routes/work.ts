@@ -24,7 +24,7 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
     const deadline = Date.now() + LONG_POLL_MS
     try {
       while (true) {
-        const lease = await leaseNext(req.body.device, req.body.commit, req.body.runId)
+        const lease = await leaseNext(req.body.device, req.body.commits, req.body.runId)
         if (lease) return lease
         const left = deadline - Date.now()
         if (left <= 0) return reply.code(204).send()

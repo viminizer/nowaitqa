@@ -8,14 +8,20 @@ const Env = z.object({
   HOST: z.string().min(1), // this machine's name, as in the devices table
   TEST_ACCOUNT_PASSWORD: z.string().optional(), // shared by all test accounts in the pool
   // Folder of scenario files, inside a git checkout. Default: the samples in this repo.
+  // With SCENARIOS_REPO: the folder the runner clones into and manages (must be set).
   SCENARIOS_DIR: z
     .string()
     .min(1)
     .default(fileURLToPath(new URL('../../examples/scenarios', import.meta.url))),
+  SCENARIOS_REPO: z.string().min(1).optional(), // git URL the runner pulls every minute
+  SCENARIOS_BRANCH: z.string().min(1).default('main'),
   SCENARIO_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),
 })
 
-const parsed = Env.safeParse(process.env)
+const parsed = Env.refine((env) => !env.SCENARIOS_REPO || process.env.SCENARIOS_DIR, {
+  message: 'set SCENARIOS_DIR: the folder to clone SCENARIOS_REPO into',
+  path: ['SCENARIOS_DIR'],
+}).safeParse(process.env)
 if (!parsed.success) {
   console.error(`Invalid runner env:\n${z.prettifyError(parsed.error)}`)
   process.exit(1)

@@ -1,22 +1,9 @@
 // Runs one leased scenario on one phone and turns the outcome into a result for the server.
-import { execFileSync } from 'node:child_process'
-import type { Catalog, Device, Lease, ResultBody } from '@nowait/shared'
-import { loadScenarios } from '@nowait-qa/sdk'
+import type { Device, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
+import { findScenario } from './catalog.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
-
-// The scenarios and their git commit are read once at startup: restart the runner after a pull.
-const scenarios = new Map((await loadScenarios(config.SCENARIOS_DIR)).map((s) => [s.id, s]))
-const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: config.SCENARIOS_DIR })
-  .toString()
-  .trim()
-
-// What the runner tells the server it can run. The server only leases it work from this commit.
-export const catalog: Catalog = {
-  commit: head,
-  scenarios: [...scenarios.values()].map(({ id, platforms }) => ({ id, platforms })),
-}
 
 export async function runScenario(
   driver: Browser,
@@ -27,8 +14,12 @@ export async function runScenario(
   const result = { queueId: lease.queueId, device: device.name }
 
   try {
-    const scenario = scenarios.get(lease.scenarioId)
-    if (!scenario) throw new Error(`scenario ${lease.scenarioId} not found on this runner`)
+    const scenario = findScenario(lease.commit, lease.scenarioId)
+    if (!scenario) {
+      throw new Error(
+        `scenario ${lease.scenarioId} at commit ${lease.commit} is not on this runner`,
+      )
+    }
 
     await driver.getLogs(logType(device)) // drain old log lines, so the log holds only this scenario
     log(device.name, `run ${lease.runId}: ${lease.scenarioId} (attempt ${lease.attempt})`)

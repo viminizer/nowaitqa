@@ -50,8 +50,8 @@ export async function getRun(id: number) {
 export class DeviceGoneError extends Error {}
 
 // Waits up to 30s on the server. null = no work right now.
-export async function lease(device: string, commit: string, runId?: number) {
-  const res = await call('POST', '/lease', [200, 204, 404], { device, commit, runId })
+export async function lease(device: string, commits: string[], runId?: number) {
+  const res = await call('POST', '/lease', [200, 204, 404], { device, commits, runId })
   if (res.status === 404) throw new DeviceGoneError(`device ${device} is unknown or disabled`)
   if (res.status === 204) return null
   return Lease.parse(await res.json())
