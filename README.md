@@ -147,15 +147,23 @@ To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serv
 ## Notifications
 
 When a run ends, the server posts it to chat: one message with the result, and each failed
-scenario (error and screenshot) in its thread, up to 10. Every platform implements the same
-`Notifier` interface (`server/src/notify/notifier.ts`), so adding one is a new file plus one line
-in `server/src/notify/index.ts`. A run is sent once per platform; if the platform is down, the
-server tries again every 15 seconds for a day. Runs that ended before a platform was first turned
-on are not sent.
+scenario (error and screenshot) next to it, up to 10. Slack and Telegram can both be on. Every
+platform implements the same `Notifier` interface (`server/src/notify/notifier.ts`), so adding one
+is a new file plus one line in `server/src/notify/index.ts`. A run is sent once per platform; if
+the platform is down, the server tries again every 15 seconds for a day. Runs that ended before a
+platform was first turned on are not sent.
 
 Slack: create a Slack app with a bot token (`chat:write`, `files:write`), add it to the channel,
 and set `SLACK_BOT_TOKEN` and `SLACK_CHANNEL`. Set `PUBLIC_URL` to link each message to its run
 on the dashboard.
+
+Telegram: add a bot (from @BotFather) to a group with topics, and set `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` (the group, like `-1001234567890`). Each kind of message can go to its own
+topic, by its id (`message_thread_id`):
+
+- `TELEGRAM_RUNS_TOPIC`: every run's summary. Unset: the General topic.
+- `TELEGRAM_ERRORS_TOPIC`: each failed scenario, with its screenshot and a link to its run. Unset:
+  replies to the run's summary.
 
 ## Jenkins
 

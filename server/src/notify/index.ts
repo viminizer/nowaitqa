@@ -10,6 +10,7 @@ import { notifications, notifiersOn, queue, results, runs } from '../db/schema.t
 import { getRun } from '../queue.ts'
 import { type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { slackNotifier } from './slack.ts'
+import { telegramNotifier } from './telegram.ts'
 
 // Add a platform here: it is on when its settings are set.
 const notifiers: Notifier[] = [
@@ -19,6 +20,17 @@ const notifiers: Notifier[] = [
           token: config.SLACK_BOT_TOKEN,
           channel: config.SLACK_CHANNEL,
           apiUrl: config.SLACK_API_URL,
+        }),
+      ]
+    : []),
+  ...(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID
+    ? [
+        telegramNotifier({
+          token: config.TELEGRAM_BOT_TOKEN,
+          chatId: config.TELEGRAM_CHAT_ID,
+          runsTopic: config.TELEGRAM_RUNS_TOPIC,
+          errorsTopic: config.TELEGRAM_ERRORS_TOPIC,
+          apiUrl: config.TELEGRAM_API_URL,
         }),
       ]
     : []),
