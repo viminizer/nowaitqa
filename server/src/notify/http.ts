@@ -2,7 +2,7 @@
 // and a screenshot upload that says why it could not be sent.
 import { basename } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { messageOf } from '../errors.ts'
+import { messageOf } from '@nowait/shared'
 import { readArtifact } from '../storage/index.ts'
 
 const TIMEOUT_MS = 30_000 // per call; the job waits for the run, so a hung call can't block it
