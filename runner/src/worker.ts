@@ -1,5 +1,7 @@
 // One worker per phone: take the next scenario, run it, report it, repeat.
-import type { Device, Lease } from '@nowait/shared'
+
+import { setTimeout as sleep } from 'node:timers/promises'
+import { type Device, type Lease, messageOf } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { DeviceGoneError, heartbeat, lease, ResultNotSentError, sendResult } from './api.ts'
 import { commits } from './catalog.ts'
@@ -56,14 +58,17 @@ export async function runWorker(device: Device) {
         log(device.name, 'worker stopped', err.message)
         return
       }
-      log(device.name, 'worker error', err)
       // A result that could not be sent is not replaced by a "runner error" result: one of its
-      // tries may still be saved by the server, and the error report would win over it. The lease
-      // expires instead, and the scenario runs again.
-      if (current && !(err instanceof ResultNotSentError)) {
-        await reportRunnerError(device, current, err)
+      // tries may still be saved by the server, and the error report would win over it. Its lease
+      // runs out instead: "lease expired", and the scenario runs again if it has attempts left
+      // (on its last attempt it stays failed). The phone itself is fine, so no pause.
+      if (err instanceof ResultNotSentError) {
+        log(device.name, `${err.message}; unless a try got through, it counts as "lease expired"`)
+        continue
       }
-      await new Promise((resolve) => setTimeout(resolve, ERROR_PAUSE_MS))
+      log(device.name, 'worker error', err)
+      if (current) await reportRunnerError(device, current, err)
+      await sleep(ERROR_PAUSE_MS)
     }
   }
 }
@@ -131,6 +136,6 @@ async function reportRunnerError(device: Device, lease: Lease, err: unknown) {
     device: device.name,
     status: 'failed',
     durationMs: 0,
-    error: `runner error: ${err instanceof Error ? err.message : String(err)}`,
+    error: `runner error: ${messageOf(err)}`,
   }).catch((sendErr) => log(device.name, 'could not report the runner error', sendErr))
 }

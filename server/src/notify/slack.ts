@@ -1,6 +1,6 @@
-import { messageOf } from '@nowait/shared'
 // Slack, through the Web API with a bot token: a webhook can't post in threads or upload files.
 // The app needs the chat:write and files:write scopes, and must be in the channel.
+import { messageOf } from '@nowait/shared'
 import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'

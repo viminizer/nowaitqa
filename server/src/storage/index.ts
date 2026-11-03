@@ -1,6 +1,6 @@
-import { messageOf } from '@nowait/shared'
 // Where screenshots and logs live: S3 when S3_BUCKET is set, else the server's disk. Everything
 // else saves and reads them only through the functions here (R9), with keys, never file paths.
+import { messageOf } from '@nowait/shared'
 import { and, asc, eq, gt, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'

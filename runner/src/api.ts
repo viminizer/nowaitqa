@@ -1,4 +1,6 @@
 // The runner's only way to reach the outside world: the server's HTTP API (R4).
+
+import { setTimeout as sleep } from 'node:timers/promises'
 import {
   type Catalog,
   type CreateRunBody,
@@ -10,9 +12,10 @@ import {
 } from '@nowait/shared'
 import { z } from 'zod'
 import { config } from './config.ts'
+import { log } from './log.ts'
 
 // An answer with a status the caller did not expect.
-export class HttpError extends Error {
+class HttpError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -76,7 +79,8 @@ export async function heartbeat(queueId: number, device: string) {
   return res.status === 204
 }
 
-// A result that could not be sent after every try.
+// A result that could not be sent after every try, because the server could not be reached or
+// kept failing. One of the tries may still be saved by the server.
 export class ResultNotSentError extends Error {}
 
 const RESULT_TRIES = 4
@@ -84,20 +88,29 @@ const RESULT_TRIES = 4
 // (server/src/queue.ts). R34.
 const RESULT_TIMEOUT_MS = 150_000
 
+// A failure that a new try can fix: no answer (a network error) or a busy or failing server.
+// Not a timeout: by then the lease has run out, so a new try can only get 409. Not another 4xx:
+// the same body gets the same answer.
+const worthRetrying = (err: unknown) =>
+  err instanceof HttpError
+    ? err.status >= 500 || err.status === 408 || err.status === 429
+    : (err as Error).name !== 'TimeoutError'
+
 // false = the lease is gone, so the server ignored this result (or an earlier try of this call
-// already saved it). A network error, a timeout or a 5xx is tried again: the server can take the
-// same result twice (the files get the same keys, and only one try records the attempt).
+// already saved it). A failure worth retrying is tried again: the server can take the same result
+// twice (the files get the same keys, and only one try records the attempt).
 export async function sendResult(result: ResultBody) {
   for (let tries = 1; ; tries++) {
     try {
       const res = await call('POST', '/results', [204, 409], result, RESULT_TIMEOUT_MS)
       return res.status === 204
     } catch (err) {
-      const retry = !(err instanceof HttpError) || err.status >= 500
-      if (!retry || tries === RESULT_TRIES) {
+      if (!worthRetrying(err)) throw err // the worker reports it, with the server's reason
+      if (tries === RESULT_TRIES) {
         throw new ResultNotSentError(`result not sent (${tries} tries): ${messageOf(err)}`)
       }
-      await new Promise((resolve) => setTimeout(resolve, 2 ** tries * 1000)) // 2, 4, 8 s
+      log(result.device, `result try ${tries} failed, trying again: ${messageOf(err)}`)
+      await sleep(2 ** tries * 1000) // 2, 4, 8 s
     }
   }
 }

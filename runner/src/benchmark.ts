@@ -1,6 +1,7 @@
 // Runs the same scenarios twice - fixed split (the old way), then the shared queue - and prints
 // how long each took and how long each phone sat idle. The runner must be running.
 //   pnpm --filter @nowait/runner benchmark --app <apk path or URL> [--repeat 10] [--platform android]
+import { setTimeout as sleep } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
 import type { RunSummary } from '@nowait/shared'
 import { createRun, getRun } from './api.ts'
@@ -29,7 +30,7 @@ async function runAndWait(split: 'fixed' | 'queue'): Promise<RunSummary> {
   while (true) {
     const run = await getRun(id)
     if (run.status !== 'running') return run
-    await new Promise((resolve) => setTimeout(resolve, 5000))
+    await sleep(5000)
   }
 }
 
