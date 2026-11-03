@@ -55,13 +55,22 @@ the next scenario from the server, runs it, reports it, and repeats.
 Settings are listed in `runner/env.example`:
 
 ```bash
-appium --port 4723   # one Appium server for all phones (UiAutomator2 driver)
+# one Appium server for all phones (UiAutomator2 driver); adb_shell: see below
+appium --address 127.0.0.1 --port 4723 --allow-insecure=uiautomator2:adb_shell
 export SERVER_URL=http://localhost:3000 RUNNER_TOKEN=<the server's RUNNER_TOKEN> HOST=macmini-1
 pnpm --filter @nowait/runner start
 ```
 
 Appium 3 needs the UiAutomator2 driver 8.x (tested with
 `appium driver install uiautomator2@8.7.3`). Driver 9.x needs Appium 4.
+
+`adb_shell` lets the runner turn on Android's `hide_error_dialogs` on each phone. When an app hangs,
+Android then closes it instead of showing "isn't responding" over the app under test, which would
+fail every scenario on that phone. The setting stays on the phone (undo it with
+`adb -s <udid> shell settings put global hide_error_dialogs 0`). Without `adb_shell`, the runner
+logs a warning and works as before. `adb_shell` lets anyone who can reach Appium run shell
+commands on the phones: keep Appium reachable only from the runner (it listens on all addresses
+unless you pass `--address 127.0.0.1`).
 
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute.

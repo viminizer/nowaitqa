@@ -113,7 +113,44 @@ async function openSession(device: Device, lease: Lease): Promise<Session> {
       'appium:adbExecTimeout': 60_000, // the 20s default is too short for slow phones and emulators
     },
   })
-  return { driver, runId: lease.runId, appId: await driver.getCurrentPackage() }
+  // From here on the session exists: close it if the rest fails, or it holds the phone's port
+  // until Appium's newCommandTimeout.
+  try {
+    await hideErrorDialogs(device, driver)
+    return { driver, runId: lease.runId, appId: await driver.getCurrentPackage() }
+  } catch (err) {
+    await driver
+      .deleteSession()
+      .catch((e) => log(device.name, 'could not close the Appium session', e))
+    throw err
+  }
+}
+
+// When an app hangs, Android shows "<app> isn't responding" over every app, and every scenario on
+// the phone fails under it (seen: "System UI isn't responding" on a slow emulator). With this
+// setting Android shows no dialog and closes the hung app: System UI restarts, and an app under
+// test that hangs still fails its scenario. Appium allows it only when started with
+// --allow-insecure=uiautomator2:adb_shell; without that the phone works as before (R50).
+// The setting stays on the phone, so it is tried once per phone while the runner runs, and a
+// failure is logged once (R49). ponytail: a phone whose try failed is tried again only after a
+// runner restart.
+const dialogsTried = new Set<string>()
+
+async function hideErrorDialogs(device: Device, driver: Browser) {
+  if (dialogsTried.has(device.name)) return
+  dialogsTried.add(device.name)
+  await driver
+    .execute('mobile: shell', {
+      command: 'settings',
+      args: ['put', 'global', 'hide_error_dialogs', '1'],
+    })
+    .catch((err) =>
+      log(
+        device.name,
+        'could not hide "isn\'t responding" dialogs (is Appium started with --allow-insecure=uiautomator2:adb_shell?)',
+        err,
+      ),
+    )
 }
 
 // Every scenario starts from a fresh app: data cleared, app opened.
