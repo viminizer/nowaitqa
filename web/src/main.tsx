@@ -35,14 +35,14 @@ function App() {
         </nav>
       </header>
       <main>
-        {/* keys: another run or page starts fresh (R42) */}
+        {/* the key: another page, run or `before` starts fresh, errors included (R42) */}
         <ErrorBoundary key={`${path}?${query}`}>
           {runId ? (
-            <RunPage key={runId} id={Number(runId)} />
+            <RunPage id={Number(runId)} />
           ) : path === '/devices' ? (
             <DevicesPage />
           ) : (
-            <RunsPage key={before} before={before} />
+            <RunsPage before={before} />
           )}
         </ErrorBoundary>
       </main>

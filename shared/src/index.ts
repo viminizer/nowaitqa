@@ -77,6 +77,14 @@ export const ApiError = z.object({ error: z.string() })
 
 // Final status of one scenario in a run: flaky = failed first, passed on retry.
 export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
+export type ScenarioStatus = z.infer<typeof ScenarioStatus>
+
+// How many scenarios have each status. The runs list (server) and a run's page (web) both use it.
+export function countStatuses(statuses: ScenarioStatus[]) {
+  const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
+  for (const status of statuses) counts[status]++
+  return counts
+}
 
 export const RunSummary = z.object({
   id: z.number().int(),
@@ -90,7 +98,6 @@ export const RunSummary = z.object({
   finishedAt: z.coerce.date().nullable(),
   durationMs: z.number().int().nullable(), // created -> finished
   scenarios: z.array(z.object({ id: z.string(), status: ScenarioStatus })),
-  counts: z.record(ScenarioStatus, z.number().int()), // how many scenarios have each status
   // Per phone: busy = holding a lease (install, reset, run). idle = the rest of the run.
   devices: z.array(
     z.object({
@@ -108,7 +115,11 @@ export type RunSummary = z.infer<typeof RunSummary>
 // A page of runs, newest first. older: the `before` value for the next page, or null on the last.
 export const RunList = z.object({
   older: z.number().int().nullable(),
-  runs: z.array(RunSummary.omit({ scenarios: true, devices: true })),
+  runs: z.array(
+    RunSummary.omit({ scenarios: true, devices: true }).extend({
+      counts: z.record(ScenarioStatus, z.number().int()), // countStatuses() of its scenarios
+    }),
+  ),
 })
 export type RunList = z.infer<typeof RunList>
 
@@ -129,7 +140,8 @@ export const Attempt = z.object({
 })
 export type Attempt = z.infer<typeof Attempt>
 
-// now: the server's clock, so a running run's timeline never mixes it with the browser's.
+// now: the database clock, the same one as every timestamp, so a running run's timeline never
+// mixes clocks.
 export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt), now: z.coerce.date() })
 export type RunDetail = z.infer<typeof RunDetail>
 

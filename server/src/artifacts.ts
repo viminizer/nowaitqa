@@ -26,10 +26,11 @@ export async function deleteOldArtifacts() {
   for (const dir of dirs) {
     const path = join(config.ARTIFACT_DIR, dir)
     if ((await stat(path)).mtimeMs >= cutoff) continue
-    await rm(path, { recursive: true })
+    // paths first: if this fails, the folder stays and the next tick tries again
     const runId = Number(dir) // folders are named by run id
     if (Number.isInteger(runId)) {
       await db.update(results).set({ screenshot: null, log: null }).where(eq(results.runId, runId))
     }
+    await rm(path, { recursive: true })
   }
 }

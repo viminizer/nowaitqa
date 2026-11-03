@@ -1,4 +1,4 @@
-import { type Attempt, RunDetail } from '@nowait/shared'
+import { type Attempt, countStatuses, RunDetail } from '@nowait/shared'
 import { useApi } from './api.ts'
 import { Timeline } from './Timeline.tsx'
 import { Counts, duration, Loaded, Status, time } from './ui.tsx'
@@ -40,7 +40,7 @@ export function RunPage({ id }: { id: number }) {
             <dl className="facts">
               <dt>Scenarios</dt>
               <dd>
-                <Counts counts={run.counts} />
+                <Counts counts={countStatuses(run.scenarios.map((s) => s.status))} />
               </dd>
               <dt>Started</dt>
               <dd>{time(run.createdAt)}</dd>

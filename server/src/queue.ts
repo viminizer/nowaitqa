@@ -1,13 +1,14 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
-import type {
-  Catalog,
-  CreateRunBody,
-  Lease,
-  ResultBody,
-  RunDetail,
-  RunList,
-  RunSummary,
+import {
+  type Catalog,
+  type CreateRunBody,
+  countStatuses,
+  type Lease,
+  type ResultBody,
+  type RunDetail,
+  type RunList,
+  type ScenarioStatus,
 } from '@nowait/shared'
 import { and, asc, desc, eq, inArray, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
@@ -115,7 +116,6 @@ export async function createRun(body: CreateRunBody) {
 }
 
 type Run = typeof runs.$inferSelect
-type ScenarioStatus = RunSummary['scenarios'][number]['status']
 
 // A scenario's final status, from its latest attempt.
 function scenarioStatus(
@@ -129,12 +129,6 @@ function scenarioStatus(
     return 'failed'
   }
   return 'pending'
-}
-
-function countStatuses(statuses: ScenarioStatus[]) {
-  const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
-  for (const status of statuses) counts[status]++
-  return counts
 }
 
 const runDuration = (run: Run) =>
@@ -186,8 +180,13 @@ export async function listRuns(before?: number): Promise<RunList> {
 // ponytail: not paged. A run holds catalog size x repeat (at most 20) x MAX_ATTEMPTS rows, and the
 // catalog has no limit. Page the attempts if catalogs grow into the thousands.
 export async function getRun(id: number): Promise<RunDetail | null> {
-  const run = await db.query.runs.findFirst({ where: eq(runs.id, id) })
-  if (!run) return null
+  // now: the database clock, the same as every timestamp below
+  const [found] = await db
+    .select({ run: runs, now: sql<Date>`now()`.mapWith(runs.createdAt) })
+    .from(runs)
+    .where(eq(runs.id, id))
+  if (!found) return null
+  const { run, now } = found
 
   const rows = await db
     .select({
@@ -230,7 +229,7 @@ export async function getRun(id: number): Promise<RunDetail | null> {
   return {
     ...run,
     durationMs,
-    now: new Date(),
+    now,
     attempts: rows.map(({ queueStatus, result, screenshot, log, ...a }) => ({
       ...a,
       // every done row has a result: expiry saves one too
@@ -239,7 +238,6 @@ export async function getRun(id: number): Promise<RunDetail | null> {
       log: log !== null,
     })),
     scenarios,
-    counts: countStatuses(scenarios.map((s) => s.status)),
     devices: [...byDevice].map(([name, s]) => ({
       name,
       ...s,
