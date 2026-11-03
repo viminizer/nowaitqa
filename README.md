@@ -146,6 +146,22 @@ page stops).
 To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
 `http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.
 
+## Screenshots and logs
+
+Each failed attempt keeps a screenshot and a log for `ARTIFACT_DAYS` (default 30). Where they live
+is behind one interface, `ArtifactStore` (`server/src/storage/store.ts`):
+
+- On the server's disk, under `ARTIFACT_DIR`. The default.
+- In S3, when `S3_BUCKET` is set. Any S3-compatible service works: AWS S3, or RustFS / MinIO with
+  `S3_ENDPOINT`. The bucket must exist; the server checks it at startup and stops if it can't use
+  it. A bucket lifecycle rule that deletes objects after `ARTIFACT_DAYS` is a good safety net: the
+  server's cleanup only knows the files its database points to.
+
+To try S3 locally with RustFS: `docker compose --profile s3 up -d`, create a bucket (in the RustFS
+console at http://localhost:9001, or with any S3 tool), then start the server with `S3_BUCKET`,
+`S3_ENDPOINT=http://localhost:9000`, `S3_ACCESS_KEY_ID=nowait-test` and
+`S3_SECRET_ACCESS_KEY=nowait-test-secret`.
+
 ## Notifications
 
 When a run ends, the server posts it to chat: one message with the result, and each failed

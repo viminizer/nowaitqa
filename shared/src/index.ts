@@ -32,7 +32,13 @@ const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
 // The scenarios a runner has, and the git commit of its scenario folder. Sent when it starts.
 export const Catalog = z.object({
   commit: Commit,
-  scenarios: z.array(z.object({ id: z.string().min(1), platforms: z.array(Platform).min(1) })),
+  scenarios: z.array(
+    z.object({
+      // part of artifact file names and keys, so no / or \
+      id: z.string().regex(/^[^/\\]+$/, 'must not contain / or \\'),
+      platforms: z.array(Platform).min(1),
+    }),
+  ),
 })
 export type Catalog = z.infer<typeof Catalog>
 
