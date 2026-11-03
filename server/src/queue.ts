@@ -1,6 +1,14 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
-import type { Catalog, CreateRunBody, Lease, ResultBody, RunSummary } from '@nowait/shared'
+import type {
+  Catalog,
+  CreateRunBody,
+  Lease,
+  ResultBody,
+  RunDetail,
+  RunList,
+  RunSummary,
+} from '@nowait/shared'
 import { and, asc, desc, eq, inArray, isNull, like, lt, ne, or, sql } from 'drizzle-orm'
 import { saveArtifact } from './artifacts.ts'
 import { config } from './config.ts'
@@ -106,47 +114,105 @@ export async function createRun(body: CreateRunBody) {
   return runId
 }
 
+type Run = typeof runs.$inferSelect
 type ScenarioStatus = RunSummary['scenarios'][number]['status']
 
-export async function getRun(id: number): Promise<RunSummary | null> {
+// A scenario's final status, from its latest attempt.
+function scenarioStatus(
+  run: Run,
+  attempt: number,
+  result: 'passed' | 'failed' | null,
+): ScenarioStatus {
+  if (result === 'passed') return attempt === 1 ? 'passed' : 'flaky'
+  // a finished run has no retry coming (it may have been stuck before one)
+  if (result === 'failed' && (attempt >= config.MAX_ATTEMPTS || run.status !== 'running')) {
+    return 'failed'
+  }
+  return 'pending'
+}
+
+const runDuration = (run: Run) =>
+  run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
+
+const RUNS_PAGE = 50
+
+// The dashboard's runs list: RUNS_PAGE runs older than `before`, newest first (R24).
+export async function listRuns(before?: number): Promise<RunList> {
+  const page = await db
+    .select()
+    .from(runs)
+    .where(before ? lt(runs.id, before) : undefined)
+    .orderBy(desc(runs.id))
+    .limit(RUNS_PAGE)
+  if (page.length === 0) return { runs: [], older: null }
+
+  // the latest attempt of every scenario in these runs
+  const latest = await db
+    .selectDistinctOn([queue.runId, queue.slot], {
+      runId: queue.runId,
+      attempt: queue.attempt,
+      result: results.status,
+    })
+    .from(queue)
+    .leftJoin(results, eq(results.queueId, queue.id))
+    .where(
+      inArray(
+        queue.runId,
+        page.map((r) => r.id),
+      ),
+    )
+    .orderBy(queue.runId, queue.slot, desc(queue.attempt))
+
+  return {
+    older: page.length === RUNS_PAGE ? (page.at(-1)?.id ?? null) : null,
+    runs: page.map((run) => {
+      const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
+      for (const a of latest) {
+        if (a.runId === run.id) counts[scenarioStatus(run, a.attempt, a.result)]++
+      }
+      return { ...run, durationMs: runDuration(run), counts }
+    }),
+  }
+}
+
+// One run with every attempt. Not paged: a run holds its catalog times `repeat` (at most 20).
+export async function getRun(id: number): Promise<RunDetail | null> {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, id) })
   if (!run) return null
 
-  const attempts = await db
+  const rows = await db
     .select({
+      queueId: queue.id,
       slot: queue.slot,
       scenarioId: queue.scenarioId,
       attempt: queue.attempt,
       device: queue.device,
+      queueStatus: queue.status,
       leasedAt: queue.leasedAt,
       result: results.status,
-      resultAt: results.createdAt,
+      finishedAt: results.createdAt,
+      durationMs: results.durationMs,
+      error: results.error,
+      screenshot: results.screenshot,
+      log: results.log,
     })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, id))
     .orderBy(asc(queue.id))
 
-  const durationMs = run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
+  const durationMs = runDuration(run)
   const bySlot = new Map<number, { id: string; status: ScenarioStatus }>()
   const byDevice = new Map<string, { attempts: number; busyMs: number }>()
 
-  for (const a of attempts) {
-    const status: ScenarioStatus =
-      a.result === 'passed'
-        ? a.attempt === 1
-          ? 'passed'
-          : 'flaky'
-        : // a finished run has no retry coming (it may have been stuck before one)
-          a.result === 'failed' && (a.attempt >= config.MAX_ATTEMPTS || run.status !== 'running')
-          ? 'failed'
-          : 'pending'
-    bySlot.set(a.slot, { id: a.scenarioId, status }) // attempts are in order: the latest decides
+  for (const a of rows) {
+    // attempts are in order: the latest decides
+    bySlot.set(a.slot, { id: a.scenarioId, status: scenarioStatus(run, a.attempt, a.result) })
 
-    if (a.device && a.leasedAt && a.resultAt) {
+    if (a.device && a.leasedAt && a.finishedAt) {
       const stats = byDevice.get(a.device) ?? { attempts: 0, busyMs: 0 }
       stats.attempts++
-      stats.busyMs += a.resultAt.getTime() - a.leasedAt.getTime()
+      stats.busyMs += a.finishedAt.getTime() - a.leasedAt.getTime()
       byDevice.set(a.device, stats)
     }
   }
@@ -154,6 +220,13 @@ export async function getRun(id: number): Promise<RunSummary | null> {
   return {
     ...run,
     durationMs,
+    attempts: rows.map(({ queueStatus, result, screenshot, log, ...a }) => ({
+      ...a,
+      // every done row has a result: expiry saves one too
+      status: result ?? (queueStatus === 'leased' ? 'leased' : 'pending'),
+      screenshot: screenshot !== null,
+      log: log !== null,
+    })),
     scenarios: [...bySlot.values()],
     devices: [...byDevice].map(([name, s]) => ({
       name,

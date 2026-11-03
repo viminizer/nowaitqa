@@ -7,6 +7,7 @@ const Env = z.object({
   // (Jenkins) can only start runs and read them.
   RUNNER_TOKEN: z.string().min(16),
   TRIGGER_TOKEN: z.string().min(16),
+  DASHBOARD_PASSWORD: z.string().min(16), // basic auth for /dashboard, any user name
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()

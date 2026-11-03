@@ -15,15 +15,17 @@ docker compose up -d   # Postgres
 ## Server
 
 Settings come from environment variables. `server/env.example` lists them; the ones with a value
-there have that default. Set at least the database and the two tokens:
+there have that default. Set at least the database, the two tokens and the dashboard password:
 
 ```bash
 export DATABASE_URL=postgres://nowait:nowait@localhost:5432/nowait
 export RUNNER_TOKEN=<random, 16+ characters> TRIGGER_TOKEN=<another one>
+export DASHBOARD_PASSWORD=<another one>
 pnpm --filter @nowait/server dev
 ```
 
-Every request needs `Authorization: Bearer <token>`, except `GET /health`. There are two tokens:
+Every request needs `Authorization: Bearer <token>`, except `GET /health` and the dashboard.
+There are two tokens:
 
 - `RUNNER_TOKEN`: the runner. It can call every route.
 - `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
@@ -125,6 +127,21 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 `POST /runs` takes the same options: `"split": "fixed" | "queue"` (default `queue`) and
 `"repeat": N` (put every scenario in the run N times).
 
+## Dashboard
+
+Runs, each attempt with its error, screenshot and log, and the phones. A run's page has a timeline:
+one lane per phone, one block per scenario. The gaps are time a phone waited.
+
+```bash
+pnpm --filter @nowait/web build   # once, and after every change in web/
+```
+
+The server then serves it at `http://localhost:3000/dashboard/`. The browser asks for a user name
+(any) and `DASHBOARD_PASSWORD`. It is read-only, and refreshes every 5 seconds.
+
+To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
+`http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.
+
 ## Jenkins
 
 [`examples/Jenkinsfile`](examples/Jenkinsfile) shows the stage to add to an app's pipeline, after
@@ -138,6 +155,6 @@ and the test machine must be able to download the APK from Jenkins.
 ## Real deployment
 
 - Put the server behind HTTPS (a reverse proxy like Caddy or nginx). The server speaks plain HTTP,
-  so without it the tokens travel unencrypted.
+  so without it the tokens and the dashboard password travel unencrypted.
 - `appBuild` can be any URL or path, and the phones install it. Only give the trigger token to
   trusted callers.

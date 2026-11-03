@@ -1,4 +1,4 @@
-import { CreateRunBody } from '@nowait/shared'
+import { ApiError, CreateRunBody, RunSummary } from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { BadRunError, createRun, getRun } from '../queue.ts'
@@ -16,7 +16,13 @@ export const runRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/runs/:id',
-    { schema: { params: z.object({ id: z.coerce.number().int() }) } },
+    // RunSummary: the response drops the attempts, which only the dashboard needs
+    {
+      schema: {
+        params: z.object({ id: z.coerce.number().int() }),
+        response: { 200: RunSummary, 404: ApiError },
+      },
+    },
     async (req, reply) => {
       const run = await getRun(req.params.id)
       return run ?? reply.code(404).send({ error: 'run not found' })

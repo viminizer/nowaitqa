@@ -1,11 +1,11 @@
 {
   "name": "nowait-qa",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc -p web",
     "lint": "biome check ."
   },
   "devDependencies": {

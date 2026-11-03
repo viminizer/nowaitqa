@@ -3,6 +3,7 @@ packages:
   - server
   - runner
   - sdk
+  - web
   - examples/scenarios
 
 allowBuilds:

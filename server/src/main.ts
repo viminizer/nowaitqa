@@ -1,10 +1,14 @@
 import { timingSafeEqual } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import fastifyStatic from '@fastify/static'
 import Fastify from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { deleteOldArtifacts } from './artifacts.ts'
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
 import { expireLeases, expireRuns } from './queue.ts'
+import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
 import { runRoutes } from './routes/runs.ts'
 import { workRoutes } from './routes/work.ts'
@@ -13,18 +17,34 @@ const app = Fastify({ logger: true, bodyLimit: 20 * 1024 * 1024 }) // results ca
 app.setValidatorCompiler(validatorCompiler)
 app.setSerializerCompiler(serializerCompiler)
 
-// Every route except /health needs a token (R22). A leaked trigger token (Jenkins) can start
-// runs, but cannot take work or report fake results.
+// Every route except /health needs a token or the dashboard password (R22). A leaked trigger token
+// (Jenkins) can start runs, but cannot take work or report fake results.
 const TRIGGER_ROUTES = ['/runs', '/runs/:id']
-const isToken = (given: Buffer, token: string) => {
-  const expected = Buffer.from(`Bearer ${token}`)
-  return given.length === expected.length && timingSafeEqual(given, expected)
+const matches = (given: string, expected: string) => {
+  const a = Buffer.from(given)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+// Basic auth: base64 of "user:password". Any user name; only the password is checked.
+const isDashboardPassword = (header: string) => {
+  if (!header.startsWith('Basic ')) return false
+  const pair = Buffer.from(header.slice(6), 'base64').toString()
+  const colon = pair.indexOf(':')
+  return colon >= 0 && matches(pair.slice(colon + 1), config.DASHBOARD_PASSWORD)
 }
 app.addHook('onRequest', async (req, reply) => {
   if (req.url === '/health') return
-  const given = Buffer.from(req.headers.authorization ?? '')
-  if (isToken(given, config.RUNNER_TOKEN)) return
-  if (!isToken(given, config.TRIGGER_TOKEN)) {
+  const given = req.headers.authorization ?? ''
+  // The browser can't send a Bearer token on a link, so the dashboard uses basic auth instead.
+  if (req.url.startsWith('/dashboard')) {
+    if (isDashboardPassword(given)) return
+    return reply
+      .code(401)
+      .header('www-authenticate', 'Basic realm="nowait-qa"')
+      .send({ error: 'unauthorized' })
+  }
+  if (matches(given, `Bearer ${config.RUNNER_TOKEN}`)) return
+  if (!matches(given, `Bearer ${config.TRIGGER_TOKEN}`)) {
     return reply.code(401).send({ error: 'unauthorized' })
   }
   if (!TRIGGER_ROUTES.includes(req.routeOptions.url ?? '')) {
@@ -36,6 +56,15 @@ app.get('/health', async () => ({ ok: true }))
 await app.register(runRoutes)
 await app.register(workRoutes)
 await app.register(deviceRoutes)
+await app.register(dashboardRoutes)
+
+// The dashboard's built files (pnpm --filter @nowait/web build), behind the same basic auth.
+const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url))
+if (existsSync(WEB_DIST)) {
+  await app.register(fastifyStatic, { root: WEB_DIST, prefix: '/dashboard', redirect: true })
+} else {
+  app.log.warn('the dashboard is not built: run pnpm --filter @nowait/web build')
+}
 
 await runMigrations()
 

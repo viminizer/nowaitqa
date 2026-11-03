@@ -72,12 +72,18 @@ export const ResultBody = z.object({
 })
 export type ResultBody = z.infer<typeof ResultBody>
 
+// Every error response.
+export const ApiError = z.object({ error: z.string() })
+
 // Final status of one scenario in a run: flaky = failed first, passed on retry.
 export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
 
 export const RunSummary = z.object({
   id: z.number().int(),
   platform: Platform,
+  appBuild: z.string(),
+  commit: z.string(),
+  trigger: z.string(),
   split: z.enum(['queue', 'fixed']),
   status: z.enum(['running', 'passed', 'failed']),
   createdAt: z.coerce.date(),
@@ -95,3 +101,48 @@ export const RunSummary = z.object({
   ),
 })
 export type RunSummary = z.infer<typeof RunSummary>
+
+// --- dashboard (read-only) ---
+
+// A page of runs, newest first. counts: how many scenarios of the run have each final status.
+// older: the `before` value for the next page, or null on the last page.
+export const RunList = z.object({
+  older: z.number().int().nullable(),
+  runs: z.array(
+    RunSummary.omit({ scenarios: true, devices: true }).extend({
+      counts: z.record(ScenarioStatus, z.number().int()),
+    }),
+  ),
+})
+export type RunList = z.infer<typeof RunList>
+
+// One attempt of one scenario. leasedAt -> finishedAt is the time a phone spent on it.
+export const Attempt = z.object({
+  queueId: z.number().int(),
+  slot: z.number().int(),
+  scenarioId: z.string(),
+  attempt: z.number().int(),
+  device: z.string().nullable(),
+  status: z.enum(['pending', 'leased', 'passed', 'failed']),
+  leasedAt: z.coerce.date().nullable(),
+  finishedAt: z.coerce.date().nullable(),
+  durationMs: z.number().int().nullable(),
+  error: z.string().nullable(),
+  screenshot: z.boolean(), // a file is saved; get it from the dashboard files route
+  log: z.boolean(),
+})
+export type Attempt = z.infer<typeof Attempt>
+
+export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt) })
+export type RunDetail = z.infer<typeof RunDetail>
+
+// A phone and what it does now. busy: the attempt it holds a lease for.
+export const DeviceList = z.object({
+  devices: z.array(
+    Device.extend({
+      busy: z.object({ runId: z.number().int(), scenarioId: z.string() }).nullable(),
+      lastWorkAt: z.coerce.date().nullable(), // when it last finished an attempt
+    }),
+  ),
+})
+export type DeviceList = z.infer<typeof DeviceList>
