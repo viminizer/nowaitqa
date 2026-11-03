@@ -90,6 +90,7 @@ export const RunSummary = z.object({
   finishedAt: z.coerce.date().nullable(),
   durationMs: z.number().int().nullable(), // created -> finished
   scenarios: z.array(z.object({ id: z.string(), status: ScenarioStatus })),
+  counts: z.record(ScenarioStatus, z.number().int()), // how many scenarios have each status
   // Per phone: busy = holding a lease (install, reset, run). idle = the rest of the run.
   devices: z.array(
     z.object({
@@ -104,15 +105,10 @@ export type RunSummary = z.infer<typeof RunSummary>
 
 // --- dashboard (read-only) ---
 
-// A page of runs, newest first. counts: how many scenarios of the run have each final status.
-// older: the `before` value for the next page, or null on the last page.
+// A page of runs, newest first. older: the `before` value for the next page, or null on the last.
 export const RunList = z.object({
   older: z.number().int().nullable(),
-  runs: z.array(
-    RunSummary.omit({ scenarios: true, devices: true }).extend({
-      counts: z.record(ScenarioStatus, z.number().int()),
-    }),
-  ),
+  runs: z.array(RunSummary.omit({ scenarios: true, devices: true })),
 })
 export type RunList = z.infer<typeof RunList>
 
@@ -133,7 +129,8 @@ export const Attempt = z.object({
 })
 export type Attempt = z.infer<typeof Attempt>
 
-export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt) })
+// now: the server's clock, so a running run's timeline never mixes it with the browser's.
+export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt), now: z.coerce.date() })
 export type RunDetail = z.infer<typeof RunDetail>
 
 // A phone and what it does now. busy: the attempt it holds a lease for.

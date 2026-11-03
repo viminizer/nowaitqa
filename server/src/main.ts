@@ -36,7 +36,8 @@ app.addHook('onRequest', async (req, reply) => {
   if (req.url === '/health') return
   const given = req.headers.authorization ?? ''
   // The browser can't send a Bearer token on a link, so the dashboard uses basic auth instead.
-  if (req.url.startsWith('/dashboard')) {
+  // Decided by the matched route, not the raw URL (/%64ashboard matches the same route).
+  if (req.routeOptions.url?.startsWith('/dashboard')) {
     if (isDashboardPassword(given)) return
     return reply
       .code(401)
@@ -58,12 +59,12 @@ await app.register(workRoutes)
 await app.register(deviceRoutes)
 await app.register(dashboardRoutes)
 
-// The dashboard's built files (pnpm --filter @nowait/web build), behind the same basic auth.
+// The dashboard's built files, behind the same basic auth. Checked at startup: build before starting.
 const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url))
 if (existsSync(WEB_DIST)) {
   await app.register(fastifyStatic, { root: WEB_DIST, prefix: '/dashboard', redirect: true })
 } else {
-  app.log.warn('the dashboard is not built: run pnpm --filter @nowait/web build')
+  app.log.warn('the dashboard is not built: run pnpm --filter @nowait/web build, then restart')
 }
 
 await runMigrations()

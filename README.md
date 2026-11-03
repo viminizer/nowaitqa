@@ -136,8 +136,10 @@ one lane per phone, one block per scenario. The gaps are time a phone waited.
 pnpm --filter @nowait/web build   # once, and after every change in web/
 ```
 
-The server then serves it at `http://localhost:3000/dashboard/`. The browser asks for a user name
-(any) and `DASHBOARD_PASSWORD`. It is read-only, and refreshes every 5 seconds.
+Build it before you start the server: the server looks for it at startup. It then serves it at
+`http://localhost:3000/dashboard/`. The browser asks for a user name
+(any) and `DASHBOARD_PASSWORD`. It is read-only, and refreshes every 5 seconds (a finished run's
+page stops).
 
 To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
 `http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.

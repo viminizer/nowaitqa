@@ -1,5 +1,5 @@
 // Pieces every page uses, so the same thing looks the same everywhere.
-import type { ReactNode } from 'react'
+import { Component, type ReactNode } from 'react'
 import type { ApiState } from './api.ts'
 
 // Loading, error, and the data. A failed refresh keeps the last data and shows the error on top.
@@ -29,6 +29,26 @@ export function Loaded<T>({
       {children(state.data)}
     </>
   )
+}
+
+// A render error shows a message instead of a blank page (R46). Keyed by page, so moving to another
+// page clears it.
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {}
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <p className="error" role="alert">
+        This page crashed: {this.state.error.message}{' '}
+        <button type="button" onClick={() => location.reload()}>
+          Reload
+        </button>
+      </p>
+    )
+  }
 }
 
 // A run, scenario, attempt or phone status. A leased attempt is one a phone is running now.

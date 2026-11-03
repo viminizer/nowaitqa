@@ -131,6 +131,12 @@ function scenarioStatus(
   return 'pending'
 }
 
+function countStatuses(statuses: ScenarioStatus[]) {
+  const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
+  for (const status of statuses) counts[status]++
+  return counts
+}
+
 const runDuration = (run: Run) =>
   run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
 
@@ -163,19 +169,22 @@ export async function listRuns(before?: number): Promise<RunList> {
     )
     .orderBy(queue.runId, queue.slot, desc(queue.attempt))
 
+  const byRun = Map.groupBy(latest, (a) => a.runId)
   return {
     older: page.length === RUNS_PAGE ? (page.at(-1)?.id ?? null) : null,
-    runs: page.map((run) => {
-      const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
-      for (const a of latest) {
-        if (a.runId === run.id) counts[scenarioStatus(run, a.attempt, a.result)]++
-      }
-      return { ...run, durationMs: runDuration(run), counts }
-    }),
+    runs: page.map((run) => ({
+      ...run,
+      durationMs: runDuration(run),
+      counts: countStatuses(
+        (byRun.get(run.id) ?? []).map((a) => scenarioStatus(run, a.attempt, a.result)),
+      ),
+    })),
   }
 }
 
-// One run with every attempt. Not paged: a run holds its catalog times `repeat` (at most 20).
+// One run with every attempt.
+// ponytail: not paged. A run holds catalog size x repeat (at most 20) x MAX_ATTEMPTS rows, and the
+// catalog has no limit. Page the attempts if catalogs grow into the thousands.
 export async function getRun(id: number): Promise<RunDetail | null> {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, id) })
   if (!run) return null
@@ -217,9 +226,11 @@ export async function getRun(id: number): Promise<RunDetail | null> {
     }
   }
 
+  const scenarios = [...bySlot.values()]
   return {
     ...run,
     durationMs,
+    now: new Date(),
     attempts: rows.map(({ queueStatus, result, screenshot, log, ...a }) => ({
       ...a,
       // every done row has a result: expiry saves one too
@@ -227,7 +238,8 @@ export async function getRun(id: number): Promise<RunDetail | null> {
       screenshot: screenshot !== null,
       log: log !== null,
     })),
-    scenarios: [...bySlot.values()],
+    scenarios,
+    counts: countStatuses(scenarios.map((s) => s.status)),
     devices: [...byDevice].map(([name, s]) => ({
       name,
       ...s,

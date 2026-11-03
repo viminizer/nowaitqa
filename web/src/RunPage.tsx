@@ -6,6 +6,9 @@ import { Counts, duration, Loaded, Status, time } from './ui.tsx'
 // Failures first: they are what people open a run for.
 const ORDER: Record<Attempt['status'], number> = { failed: 0, leased: 1, pending: 2, passed: 3 }
 
+// A finished run does not change any more.
+const isRunning = (run: RunDetail) => run.status === 'running'
+
 const file = (a: Attempt, name: 'screenshot' | 'log') =>
   `/dashboard/api/attempts/${a.queueId}/${name}`
 
@@ -22,12 +25,10 @@ function ErrorText({ error }: { error: string }) {
 }
 
 export function RunPage({ id }: { id: number }) {
-  const state = useApi(`/runs/${id}`, RunDetail)
+  const state = useApi(`/runs/${id}`, RunDetail, isRunning)
   return (
     <Loaded state={state}>
       {(run) => {
-        const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
-        for (const s of run.scenarios) counts[s.status]++
         const attempts = run.attempts.toSorted(
           (a, b) => ORDER[a.status] - ORDER[b.status] || a.queueId - b.queueId,
         )
@@ -39,7 +40,7 @@ export function RunPage({ id }: { id: number }) {
             <dl className="facts">
               <dt>Scenarios</dt>
               <dd>
-                <Counts counts={counts} />
+                <Counts counts={run.counts} />
               </dd>
               <dt>Started</dt>
               <dd>{time(run.createdAt)}</dd>
