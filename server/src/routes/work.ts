@@ -42,7 +42,9 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
   })
 
   app.post('/results', { schema: { body: ResultBody } }, async (req, reply) => {
-    const saved = await submitResult(req.body)
+    const { saved, problems } = await submitResult(req.body)
+    // the result is saved anyway; the store's trouble goes to the log too
+    for (const problem of problems) req.log.error(`result ${req.body.queueId}: ${problem}`)
     return saved ? reply.code(204).send() : reply.code(409).send({ error: 'lease is gone' })
   })
 }

@@ -1,5 +1,6 @@
 // Slack, through the Web API with a bot token: a webhook can't post in threads or upload files.
 // The app needs the chat:write and files:write scopes, and must be in the channel.
+import { messageOf } from '../errors.ts'
 import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'
@@ -72,7 +73,7 @@ export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
           await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text })
         }
       } catch (err) {
-        throw new PartialSendError(`the thread is incomplete: ${(err as Error).message}`)
+        throw new PartialSendError(`the thread is incomplete: ${messageOf(err)}`)
       }
     },
   }

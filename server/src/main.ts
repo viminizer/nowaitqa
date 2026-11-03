@@ -6,6 +6,7 @@ import Fastify from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
+import { every } from './jobs.ts'
 import { startNotifications } from './notify/index.ts'
 import { expireLeases, expireRuns } from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
@@ -82,28 +83,10 @@ app.log.info(`artifacts are kept in: ${store.name}`)
 // First, so a run that the jobs below finish is news to a platform turned on just now.
 await startNotifications(app.log)
 
-// Background jobs: each runs once now and then `ms` after it ends, so a restart can't skip a long
-// timer (R48) and a slow run never overlaps the next. A failing job is retried on the next tick,
-// and logs its first 3 failures in a row, then every 100th (R49).
-const every = (ms: number, name: string, job: () => Promise<unknown>) => {
-  let failures = 0
-  const run = async () => {
-    try {
-      await job()
-      failures = 0
-    } catch (err) {
-      failures++
-      if (failures <= 3 || failures % 100 === 0) {
-        app.log.error(err, `${name} failed (${failures} in a row)`)
-      }
-    }
-    setTimeout(run, ms)
-  }
-  run()
-}
-// the expiry jobs wait at first on their own, to give runners time to come back (see queue.ts)
-every(15_000, 'expireLeases', expireLeases)
-every(60_000, 'expireRuns', expireRuns)
-every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts)
+// Background jobs (jobs.ts). The expiry jobs wait at first on their own, to give runners time to
+// come back after a restart (see queue.ts).
+every(15_000, 'expireLeases', expireLeases, app.log)
+every(60_000, 'expireRuns', expireRuns, app.log)
+every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts, app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })

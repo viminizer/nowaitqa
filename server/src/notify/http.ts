@@ -2,6 +2,7 @@
 // and a screenshot upload that says why it could not be sent.
 import { basename } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { messageOf } from '../errors.ts'
 import { readArtifact } from '../storage/index.ts'
 
 const TIMEOUT_MS = 30_000 // per call; the job waits for the run, so a hung call can't block it
@@ -43,7 +44,7 @@ export async function sendScreenshot(
     if (!data) return { sent: false, reason: 'the file is gone' }
     png = data
   } catch (err) {
-    return { sent: false, reason: `the file can't be read (${(err as Error).message})` }
+    return { sent: false, reason: `the file can't be read (${messageOf(err)})` }
   }
   try {
     await upload(png, basename(key))
@@ -54,6 +55,6 @@ export async function sendScreenshot(
     if ((err as Error).name === 'TimeoutError') {
       return { sent: false, reason: 'the upload timed out; the screenshot may still appear' }
     }
-    return { sent: false, reason: (err as Error).message }
+    return { sent: false, reason: messageOf(err) }
   }
 }

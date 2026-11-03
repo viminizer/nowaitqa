@@ -31,6 +31,7 @@ import {
 import { config } from './config.ts'
 import { db } from './db/index.ts'
 import { accounts, catalogs, devices, queue, results, runs } from './db/schema.ts'
+import { messageOf } from './errors.ts'
 import { saveArtifact } from './storage/index.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -133,6 +134,24 @@ export async function createRun(body: CreateRunBody) {
 }
 
 type Run = typeof runs.$inferSelect
+
+// When a lease taken or renewed now runs out.
+const leaseEnd = (seconds = config.LEASE_SECONDS) => sql`now() + make_interval(secs => ${seconds})`
+
+// A result's uploads get at most UPLOAD_SECONDS: past that a file counts as not saved (R50). Its
+// lease is renewed for longer than that, so the result is always recorded before the lease ends
+// (R34). The S3 client's own timeouts only catch idle sockets, so this limit is the real one.
+const UPLOAD_SECONDS = 100
+const RENEW_SECONDS = UPLOAD_SECONDS + 30
+
+// A promise that gives up after `ms` (the work itself may still finish in the background).
+function within<T>(ms: number, work: Promise<T>) {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`took more than ${ms / 1000} s`)), ms)
+  })
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer))
+}
 
 // A scenario's final status, from its latest attempt.
 function scenarioStatus(
@@ -372,7 +391,7 @@ export async function leaseNext(
         status: 'leased',
         device: device.name,
         leasedAt: sql`now()`,
-        leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})`,
+        leaseUntil: leaseEnd(),
       })
       .where(eq(queue.id, row.id))
       .returning()
@@ -411,7 +430,7 @@ async function takeAccount(tx: Tx, queueId: number): Promise<string | null | fal
 export async function heartbeat(queueId: number, device: string) {
   const updated = await db
     .update(queue)
-    .set({ leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})` })
+    .set({ leaseUntil: leaseEnd() })
     .where(and(eq(queue.id, queueId), eq(queue.device, device), eq(queue.status, 'leased')))
     .returning({ id: queue.id })
   return updated.length > 0
@@ -428,15 +447,38 @@ export async function submitResult(body: ResultBody) {
   )
   // The files go up before the transaction: S3 is network I/O, and a transaction must not hold a
   // connection and the row lock while it waits. A result for a lease that is gone uploads nothing.
-  const row = await db.query.queue.findFirst({ where: leasedHere })
-  if (!row) return false
+  // The runner stops its heartbeat before it sends the result, so the lease is renewed here, for
+  // the longer of a lease and the upload window: a slow upload must not let it run out and turn
+  // this result into "lease expired" (R34).
+  const renewFor = Math.max(config.LEASE_SECONDS, RENEW_SECONDS)
+  const [row] = await db
+    .update(queue)
+    .set({ leaseUntil: leaseEnd(renewFor) })
+    .where(leasedHere)
+    .returning()
+  if (!row) return { saved: false, problems: [] }
   // The slot keeps names apart when a scenario repeats in one run.
   const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
-  const [screenshot, log] = await Promise.all([
-    body.screenshot &&
-      saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64')),
-    body.log && saveArtifact(row.runId, `${name}.log`, body.log),
+  // A file that can't be stored never changes the result (R50): it is saved without it. The result
+  // only says which file is missing (it shows on the dashboard and in chat); the store's own error,
+  // which can name buckets and request ids, goes to the server log (`problems`).
+  const upload = (file: string, data: Buffer | string) =>
+    within(UPLOAD_SECONDS * 1000, saveArtifact(row.runId, file, data))
+  const [screenshot, log] = await Promise.allSettled([
+    body.screenshot && upload(`${name}.png`, Buffer.from(body.screenshot, 'base64')),
+    body.log && upload(`${name}.log`, body.log),
   ])
+  const failed = Object.entries({ screenshot, log }).flatMap(([file, r]) =>
+    r.status === 'rejected' ? [{ file, why: messageOf(r.reason) }] : [],
+  )
+  const problems = failed.map(({ file, why }) => `${file} not saved: ${why}`)
+  const kept = (r: typeof screenshot) => (r.status === 'fulfilled' && r.value) || undefined
+  // The test's own error stays the first line: chat shows the first line as the reason.
+  const notes = failed.map(({ file }) => `(${file} not saved: the artifact store failed)`)
+  // || not ??: an empty error counts as none
+  const testError =
+    body.error || (body.status === 'failed' && notes.length ? 'no error message' : '')
+  const error = [testError, ...notes].filter(Boolean).join('\n') || undefined
 
   const saved = await db.transaction(async (tx) => {
     // the lease may have run out while the files went up
@@ -445,15 +487,15 @@ export async function submitResult(body: ResultBody) {
     await recordAttempt(tx, done, {
       status: body.status,
       durationMs: body.durationMs,
-      error: body.error,
-      screenshot: screenshot || undefined,
-      log: log || undefined,
+      error,
+      screenshot: kept(screenshot),
+      log: kept(log),
     })
     return true
   })
   // A finished attempt frees its account and may have queued a retry: waiting phones look again.
   if (saved) notifyWork()
-  return saved
+  return { saved, problems }
 }
 
 // A lease that ran out means the worker died: count it as a failed attempt.
