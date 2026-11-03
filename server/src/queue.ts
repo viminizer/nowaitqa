@@ -428,15 +428,31 @@ export async function submitResult(body: ResultBody) {
   )
   // The files go up before the transaction: S3 is network I/O, and a transaction must not hold a
   // connection and the row lock while it waits. A result for a lease that is gone uploads nothing.
-  const row = await db.query.queue.findFirst({ where: leasedHere })
-  if (!row) return false
+  // The runner stops its heartbeat before it sends the result, so the lease is renewed here: a slow
+  // upload must not let it run out and turn this result into "lease expired" (R34).
+  const [row] = await db
+    .update(queue)
+    .set({ leaseUntil: sql`now() + make_interval(secs => ${config.LEASE_SECONDS})` })
+    .where(leasedHere)
+    .returning()
+  if (!row) return { saved: false, problems: [] }
   // The slot keeps names apart when a scenario repeats in one run.
   const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
-  const [screenshot, log] = await Promise.all([
+  // A file that can't be stored never changes the result (R50): it is saved without it, and the
+  // result's error says why.
+  const [screenshot, log] = await Promise.allSettled([
     body.screenshot &&
       saveArtifact(row.runId, `${name}.png`, Buffer.from(body.screenshot, 'base64')),
     body.log && saveArtifact(row.runId, `${name}.log`, body.log),
   ])
+  const why = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason))
+  const problems = [
+    ...(screenshot.status === 'rejected'
+      ? [`screenshot not saved: ${why(screenshot.reason)}`]
+      : []),
+    ...(log.status === 'rejected' ? [`log not saved: ${why(log.reason)}`] : []),
+  ]
+  const kept = (file: typeof screenshot) => (file.status === 'fulfilled' && file.value) || undefined
 
   const saved = await db.transaction(async (tx) => {
     // the lease may have run out while the files went up
@@ -445,15 +461,15 @@ export async function submitResult(body: ResultBody) {
     await recordAttempt(tx, done, {
       status: body.status,
       durationMs: body.durationMs,
-      error: body.error,
-      screenshot: screenshot || undefined,
-      log: log || undefined,
+      error: [body.error, ...problems].filter(Boolean).join('\n') || undefined,
+      screenshot: kept(screenshot),
+      log: kept(log),
     })
     return true
   })
   // A finished attempt frees its account and may have queued a retry: waiting phones look again.
   if (saved) notifyWork()
-  return saved
+  return { saved, problems }
 }
 
 // A lease that ran out means the worker died: count it as a failed attempt.

@@ -7,6 +7,7 @@ import type { FastifyBaseLogger } from 'fastify'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
 import { notifications, notifiersOn, queue, results, runs } from '../db/schema.ts'
+import { every } from '../jobs.ts'
 import { getRun } from '../queue.ts'
 import { type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { slackNotifier } from './slack.ts'
@@ -144,18 +145,14 @@ async function sendDue(notifier: Notifier, log: FastifyBaseLogger) {
   }
 }
 
-// Starts one job per platform that is set up, so a slow or rate-limited platform never holds back
-// another. It first records when each one was turned on (now, not at the first tick: a run that
-// ends in between is news). Each tick starts after the last one ends, so a run is never sent twice.
+// Starts one job per platform that is set up (jobs.ts), so a slow or rate-limited platform never
+// holds back another, and a run is never sent twice (ticks don't overlap). It first records when
+// each one was turned on: now, not at the first tick, so a run that ends in between is news.
 export async function startNotifications(log: FastifyBaseLogger) {
   if (notifiers.length === 0) return
   for (const notifier of notifiers) await turnedOnAt(notifier.name)
   log.info(`notifications on: ${notifiers.map((n) => n.name).join(', ')}`)
   for (const notifier of notifiers) {
-    const tick = async () => {
-      await sendDue(notifier, log).catch((err) => log.error(err, `${notifier.name} failed`))
-      setTimeout(tick, EVERY_MS)
-    }
-    setTimeout(tick, EVERY_MS)
+    every(EVERY_MS, `notifications to ${notifier.name}`, () => sendDue(notifier, log), log)
   }
 }

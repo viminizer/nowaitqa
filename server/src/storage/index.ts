@@ -1,6 +1,6 @@
 // Where screenshots and logs live: S3 when S3_BUCKET is set, else the server's disk. Everything
 // else saves and reads them only through the functions here (R9), with keys, never file paths.
-import { and, eq, isNotNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
 import { results, runs } from '../db/schema.ts'
@@ -30,8 +30,12 @@ export const readArtifact = (key: string) => store.read(key)
 const CLEANUP_BATCH = 100
 
 // Deletes the artifacts of runs older than ARTIFACT_DAYS, found in the database, so it works the
-// same for every store. Files first, then the keys: if a delete fails, the run is found again.
+// same for every store. Files first, then the keys: if a delete fails, the run is found again next
+// time. One run that can't be deleted never stops the others (R51): they are all tried, in run
+// order, and the failures are reported together at the end.
 export async function deleteOldArtifacts() {
+  const failed: string[] = []
+  let after = 0
   for (;;) {
     const old = await db
       .selectDistinct({ runId: results.runId })
@@ -39,15 +43,28 @@ export async function deleteOldArtifacts() {
       .innerJoin(runs, eq(runs.id, results.runId))
       .where(
         and(
+          gt(results.runId, after),
           lt(runs.createdAt, sql`now() - make_interval(days => ${config.ARTIFACT_DAYS})`),
           or(isNotNull(results.screenshot), isNotNull(results.log)),
         ),
       )
+      .orderBy(asc(results.runId))
       .limit(CLEANUP_BATCH)
     for (const { runId } of old) {
-      await store.deleteRun(runId)
-      await db.update(results).set({ screenshot: null, log: null }).where(eq(results.runId, runId))
+      after = runId
+      try {
+        await store.deleteRun(runId)
+        await db
+          .update(results)
+          .set({ screenshot: null, log: null })
+          .where(eq(results.runId, runId))
+      } catch (err) {
+        failed.push(`run ${runId}: ${(err as Error).message}`)
+      }
     }
-    if (old.length < CLEANUP_BATCH) return
+    if (old.length < CLEANUP_BATCH) break
+  }
+  if (failed.length > 0) {
+    throw new Error(`could not delete the artifacts of ${failed.length} runs: ${failed.join('; ')}`)
   }
 }
