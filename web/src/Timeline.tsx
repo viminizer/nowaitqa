@@ -5,7 +5,7 @@ import { duration } from './ui.tsx'
 // shared queue they stay small.
 export function Timeline({ run }: { run: RunDetail }) {
   const start = run.createdAt.getTime()
-  const end = run.finishedAt?.getTime() ?? Date.now()
+  const end = (run.finishedAt ?? run.now).getTime() // server clock only (R39)
   const total = Math.max(end - start, 1)
   const percent = (ms: number) => `${(ms / total) * 100}%`
   const phones = [

@@ -77,6 +77,14 @@ export const ApiError = z.object({ error: z.string() })
 
 // Final status of one scenario in a run: flaky = failed first, passed on retry.
 export const ScenarioStatus = z.enum(['pending', 'passed', 'flaky', 'failed'])
+export type ScenarioStatus = z.infer<typeof ScenarioStatus>
+
+// How many scenarios have each status. The runs list (server) and a run's page (web) both use it.
+export function countStatuses(statuses: ScenarioStatus[]) {
+  const counts = { pending: 0, passed: 0, flaky: 0, failed: 0 }
+  for (const status of statuses) counts[status]++
+  return counts
+}
 
 export const RunSummary = z.object({
   id: z.number().int(),
@@ -104,13 +112,12 @@ export type RunSummary = z.infer<typeof RunSummary>
 
 // --- dashboard (read-only) ---
 
-// A page of runs, newest first. counts: how many scenarios of the run have each final status.
-// older: the `before` value for the next page, or null on the last page.
+// A page of runs, newest first. older: the `before` value for the next page, or null on the last.
 export const RunList = z.object({
   older: z.number().int().nullable(),
   runs: z.array(
     RunSummary.omit({ scenarios: true, devices: true }).extend({
-      counts: z.record(ScenarioStatus, z.number().int()),
+      counts: z.record(ScenarioStatus, z.number().int()), // countStatuses() of its scenarios
     }),
   ),
 })
@@ -133,7 +140,9 @@ export const Attempt = z.object({
 })
 export type Attempt = z.infer<typeof Attempt>
 
-export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt) })
+// now: the database clock, the same one as every timestamp, so a running run's timeline never
+// mixes clocks.
+export const RunDetail = RunSummary.extend({ attempts: z.array(Attempt), now: z.coerce.date() })
 export type RunDetail = z.infer<typeof RunDetail>
 
 // A phone and what it does now. busy: the attempt it holds a lease for.

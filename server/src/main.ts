@@ -33,10 +33,13 @@ const isDashboardPassword = (header: string) => {
   return colon >= 0 && matches(pair.slice(colon + 1), config.DASHBOARD_PASSWORD)
 }
 app.addHook('onRequest', async (req, reply) => {
-  if (req.url === '/health') return
+  const route = req.routeOptions.url // the matched route; undefined when nothing matches
+  if (route === '/health') return
   const given = req.headers.authorization ?? ''
   // The browser can't send a Bearer token on a link, so the dashboard uses basic auth instead.
-  if (req.url.startsWith('/dashboard')) {
+  // Decided by the matched route, not the raw URL (/%64ashboard matches the same route). An unknown
+  // /dashboard URL still asks for the password, then answers 404.
+  if ((route ?? req.url).startsWith('/dashboard')) {
     if (isDashboardPassword(given)) return
     return reply
       .code(401)
@@ -47,7 +50,7 @@ app.addHook('onRequest', async (req, reply) => {
   if (!matches(given, `Bearer ${config.TRIGGER_TOKEN}`)) {
     return reply.code(401).send({ error: 'unauthorized' })
   }
-  if (!TRIGGER_ROUTES.includes(req.routeOptions.url ?? '')) {
+  if (!TRIGGER_ROUTES.includes(route ?? '')) {
     return reply.code(403).send({ error: 'the trigger token can only start and read runs' })
   }
 })
@@ -58,12 +61,12 @@ await app.register(workRoutes)
 await app.register(deviceRoutes)
 await app.register(dashboardRoutes)
 
-// The dashboard's built files (pnpm --filter @nowait/web build), behind the same basic auth.
+// The dashboard's built files, behind the same basic auth. Checked at startup: build before starting.
 const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url))
 if (existsSync(WEB_DIST)) {
   await app.register(fastifyStatic, { root: WEB_DIST, prefix: '/dashboard', redirect: true })
 } else {
-  app.log.warn('the dashboard is not built: run pnpm --filter @nowait/web build')
+  app.log.warn('the dashboard is not built: run pnpm --filter @nowait/web build, then restart')
 }
 
 await runMigrations()

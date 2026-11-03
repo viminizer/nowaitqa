@@ -56,28 +56,35 @@ export const queue = pgTable(
     leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
   },
-  (t) => [index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`)],
+  (t) => [
+    index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),
+    index('queue_leased_idx').on(t.device).where(sql`status = 'leased'`), // dashboard: busy phones
+  ],
 )
 
-export const results = pgTable('results', {
-  id: serial().primaryKey(),
-  queueId: integer()
-    .notNull()
-    .unique()
-    .references(() => queue.id),
-  runId: integer()
-    .notNull()
-    .references(() => runs.id),
-  scenarioId: text().notNull(),
-  attempt: integer().notNull(),
-  device: text().references(() => devices.name),
-  status: text({ enum: ['passed', 'failed'] }).notNull(),
-  durationMs: integer().notNull(),
-  error: text(),
-  screenshot: text(), // file path under ARTIFACT_DIR
-  log: text(), // file path under ARTIFACT_DIR
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-})
+export const results = pgTable(
+  'results',
+  {
+    id: serial().primaryKey(),
+    queueId: integer()
+      .notNull()
+      .unique()
+      .references(() => queue.id),
+    runId: integer()
+      .notNull()
+      .references(() => runs.id),
+    scenarioId: text().notNull(),
+    attempt: integer().notNull(),
+    device: text().references(() => devices.name),
+    status: text({ enum: ['passed', 'failed'] }).notNull(),
+    durationMs: integer().notNull(),
+    error: text(),
+    screenshot: text(), // file path under ARTIFACT_DIR
+    log: text(), // file path under ARTIFACT_DIR
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('results_device_idx').on(t.device, t.createdAt)], // dashboard: a phone's last work
+)
 
 // The scenario list a runner sent, per git commit of its scenario folder. Runs are filled from it.
 export const catalogs = pgTable('catalogs', {

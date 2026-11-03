@@ -1,7 +1,7 @@
 // Read-only routes for the dashboard (web/). The browser signs in with basic auth (see main.ts).
 import { readFile } from 'node:fs/promises'
 import { ApiError, DeviceList, RunDetail, RunList } from '@nowait/shared'
-import { eq, max } from 'drizzle-orm'
+import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { db } from '../db/index.ts'
@@ -26,25 +26,26 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // Every phone on every machine: bounded by the hardware, so not paged (R24 exception).
   app.get('/dashboard/api/devices', { schema: { response: { 200: DeviceList } } }, async () => {
-    const [phones, leased, lastWork] = await Promise.all([
-      db.select().from(devices).orderBy(devices.name),
+    // Both read through an index (queue_leased_idx, results_device_idx), not the whole history.
+    const [phones, leased] = await Promise.all([
+      db
+        .select({
+          ...getTableColumns(devices),
+          lastWorkAt: sql<Date | null>`(
+            select max(${results.createdAt}) from ${results} where ${results.device} = ${devices.name}
+          )`.mapWith(results.createdAt),
+        })
+        .from(devices)
+        .orderBy(devices.name),
       db
         .select({ device: queue.device, runId: queue.runId, scenarioId: queue.scenarioId })
         .from(queue)
         .where(eq(queue.status, 'leased')),
-      db
-        .select({ device: results.device, at: max(results.createdAt) })
-        .from(results)
-        .groupBy(results.device),
     ])
     return {
       devices: phones.map((phone) => {
         const busy = leased.find((l) => l.device === phone.name)
-        return {
-          ...phone,
-          busy: busy ? { runId: busy.runId, scenarioId: busy.scenarioId } : null,
-          lastWorkAt: lastWork.find((w) => w.device === phone.name)?.at ?? null,
-        }
+        return { ...phone, busy: busy ? { runId: busy.runId, scenarioId: busy.scenarioId } : null }
       }),
     }
   })

@@ -4,6 +4,7 @@ import { DevicesPage } from './DevicesPage.tsx'
 import { RunPage } from './RunPage.tsx'
 import { RunsPage } from './RunsPage.tsx'
 import './style.css'
+import { ErrorBoundary } from './ui.tsx'
 
 // Pages live in the URL hash (#/runs/5), so the server only serves one index.html.
 const onHashChange = (update: () => void) => {
@@ -34,13 +35,16 @@ function App() {
         </nav>
       </header>
       <main>
-        {runId ? (
-          <RunPage id={Number(runId)} />
-        ) : path === '/devices' ? (
-          <DevicesPage />
-        ) : (
-          <RunsPage before={before} />
-        )}
+        {/* the key: another page, run or `before` starts fresh, errors included (R42) */}
+        <ErrorBoundary key={`${path}?${query}`}>
+          {runId ? (
+            <RunPage id={Number(runId)} />
+          ) : path === '/devices' ? (
+            <DevicesPage />
+          ) : (
+            <RunsPage before={before} />
+          )}
+        </ErrorBoundary>
       </main>
     </>
   )
