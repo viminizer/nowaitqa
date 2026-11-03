@@ -102,7 +102,29 @@ export async function createRun(body: CreateRunBody) {
 
 type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'>
 
-// Saves a run and queues its items (scenario ids, in order), then wakes waiting phones.
+// How long each scenario usually takes on a platform: the average of its last EXPECTED_FROM
+// passing attempts. Failed ones don't count: a failure can stop early or run into a timeout.
+// A scenario without a pass yet is missing from the map.
+const EXPECTED_FROM = 10
+
+async function expectedTimes(platform: Run['platform'], scenarioIds: string[]) {
+  const ids = [...new Set(scenarioIds)]
+  // one small index read per scenario (results_passed_idx), not the whole history.
+  // ponytail: results has no platform, so a scenario id run on both platforms reads past the other
+  // platform's passes; add a platform column to results when iOS comes.
+  const rows = await db.execute<{ id: string; ms: number | null }>(sql`
+    SELECT s.id, (
+      SELECT round(avg(last.duration_ms))::int FROM (
+        SELECT r.duration_ms FROM ${results} r JOIN ${runs} ru ON ru.id = r.run_id
+        WHERE r.scenario_id = s.id AND r.status = 'passed' AND ru.platform = ${platform}
+        ORDER BY r.id DESC LIMIT ${EXPECTED_FROM}) last
+    ) AS ms
+    FROM unnest(${sql.param(ids)}::text[]) AS s(id)`)
+  return new Map(rows.rows.flatMap((r) => (r.ms === null ? [] : [[r.id, r.ms] as const])))
+}
+
+// Saves a run and queues its items (scenario ids, in order), then wakes waiting phones. Each item
+// gets its scenario's expected time, so phones take the longest first (leaseNext).
 async function insertRun(newRun: NewRun, items: string[]) {
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
   const phones =
@@ -118,6 +140,7 @@ async function insertRun(newRun: NewRun, items: string[]) {
   if (newRun.split === 'fixed' && phones.length === 0) {
     throw new BadRunError(`no enabled ${newRun.platform} phones to split the run across`)
   }
+  const expected = await expectedTimes(newRun.platform, items)
 
   const runId = await db.transaction(async (tx) => {
     const [run] = await tx.insert(runs).values(newRun).returning({ id: runs.id })
@@ -128,6 +151,7 @@ async function insertRun(newRun: NewRun, items: string[]) {
         slot,
         scenarioId,
         assignedDevice: phones[slot % phones.length],
+        expectedMs: expected.get(scenarioId),
       })),
     )
     return run.id
@@ -369,7 +393,9 @@ export async function leaseNext(
     if (!device) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
 
     // The phone's current run first (a new run means a new session and app install), then the
-    // oldest run. SKIP LOCKED: if another phone is taking a row right now, take the next one.
+    // oldest run. In a run, the longest scenario first, and one with no history yet before all:
+    // short ones at the end fill the gaps, so no phone runs a long one alone while the others
+    // wait. SKIP LOCKED: if another phone is taking a row right now, take the next one.
     const [row] = await tx
       .select({ id: queue.id, run: runs })
       .from(queue)
@@ -387,7 +413,12 @@ export async function leaseNext(
           ),
         ),
       )
-      .orderBy(desc(sql`${queue.runId} = ${currentRunId}`), asc(queue.runId), asc(queue.id))
+      .orderBy(
+        desc(sql`${queue.runId} = ${currentRunId}`),
+        asc(queue.runId),
+        sql`${queue.expectedMs} desc nulls first`,
+        asc(queue.id),
+      )
       .limit(1)
       .for('update', { of: queue, skipLocked: true })
     if (!row) return null
@@ -685,6 +716,7 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
       slot: row.slot,
       scenarioId: row.scenarioId,
       attempt: row.attempt + 1,
+      expectedMs: row.expectedMs,
     })
     return
   }

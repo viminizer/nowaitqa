@@ -61,6 +61,8 @@ export const queue = pgTable(
       .notNull()
       .default('pending'),
     assignedDevice: text().references(() => devices.name), // set only when split = fixed
+    // how long this scenario usually takes (queue.ts expectedTimes); null = no history yet
+    expectedMs: integer(),
     device: text().references(() => devices.name), // the phone holding (or that held) the lease
     leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
@@ -96,6 +98,8 @@ export const results = pgTable(
   (t) => [
     index('results_device_idx').on(t.device, t.createdAt), // dashboard: a phone's last work
     index('results_run_idx').on(t.runId), // a run's results (artifact cleanup)
+    // expectedTimes: a scenario's latest passing attempts
+    index('results_passed_idx').on(t.scenarioId, t.id).where(sql`status = 'passed'`),
   ],
 )
 
