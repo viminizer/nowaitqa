@@ -1,5 +1,6 @@
-// The one interface every chat platform implements (Slack today; Telegram or others later). A
-// platform only formats and sends: what to send, when, and retries live in notify/index.ts.
+// The one interface every chat platform implements. Kevin asked for it so Telegram and other
+// platforms can be added next to Slack; it has one implementation until then (R13, on purpose).
+// A platform only formats and sends: what to send, when, and retries live in notify/index.ts.
 import type { RunSummary, ScenarioStatus } from '@nowait/shared'
 
 // A finished run, the same for every platform.
@@ -8,7 +9,7 @@ export type RunReport = {
   counts: Record<ScenarioStatus, number>
   url: string | null // the run's dashboard page; null when PUBLIC_URL is not set
   flaky: string[] // scenario ids, at most REPORT_LIMIT
-  failures: Failure[] // the failed scenarios, at most REPORT_LIMIT
+  failures: Failure[] // the failed scenarios in slot order, at most REPORT_LIMIT
   moreFailures: number // failed scenarios left out of `failures`
 }
 
@@ -19,8 +20,13 @@ export type Failure = {
   screenshot: string | null // file path on the server; may be gone after ARTIFACT_DAYS
 }
 
+// The main message went out, but some details did not. The run counts as sent (sending it again
+// would post it twice) and the error is logged.
+export class PartialSendError extends Error {}
+
 export interface Notifier {
   name: string // stored with each sent run, so it must never change
-  // Sends one finished run. Throws when it could not: the run is sent again later.
+  // Sends one finished run. Throws when the main message could not be sent: the run is sent again
+  // later. Throws PartialSendError when only details failed.
   runFinished(report: RunReport): Promise<void>
 }

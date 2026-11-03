@@ -2,27 +2,40 @@
 // The app needs the chat:write and files:write scopes, and must be in the channel.
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { formatDuration } from '@nowait/shared'
-import type { Failure, Notifier, RunReport } from './notifier.ts'
+import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 
+// apiUrl: https://slack.com/api, or https://slack-gov.com/api for GovSlack.
 type Settings = { token: string; channel: string; apiUrl: string }
 
+const TIMEOUT_MS = 30_000 // per call; the job waits for the run, so a hung call can't block it
+const RATE_LIMIT_TRIES = 3
+
 export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
-  // Slack answers 200 with { ok: false, error } when a call fails.
+  // Slack answers 200 with { ok: false, error } when a call fails, and 429 with Retry-After when
+  // it is rate limited: then it waits and tries again.
   async function call(method: string, body: Record<string, unknown>, form = false) {
-    const res = await fetch(`${apiUrl}/${method}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json',
-      },
-      body: form
-        ? new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))
-        : JSON.stringify(body),
-    })
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
-    if (!data.ok) throw new Error(`slack ${method}: ${data.error ?? `HTTP ${res.status}`}`)
-    return data as Record<string, unknown>
+    for (let tries = 1; ; tries++) {
+      const res = await fetch(`${apiUrl}/${method}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json',
+        },
+        body: form
+          ? new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))
+          : JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+      if (res.status === 429 && tries < RATE_LIMIT_TRIES) {
+        await sleep(Math.min(Number(res.headers.get('retry-after')) || 1, 30) * 1000)
+        continue
+      }
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+      if (!data.ok) throw new Error(`slack ${method}: ${data.error ?? `HTTP ${res.status}`}`)
+      return data as Record<string, unknown>
+    }
   }
 
   async function upload(
@@ -38,7 +51,11 @@ export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
       { filename, length: png.length },
       true,
     )
-    const res = await fetch(String(upload_url), { method: 'POST', body: png })
+    const res = await fetch(String(upload_url), {
+      method: 'POST',
+      body: png,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
     if (!res.ok) throw new Error(`slack upload: HTTP ${res.status}`)
     await call('files.completeUploadExternal', {
       files: [{ id: file_id, title: filename }],
@@ -48,16 +65,19 @@ export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
     })
   }
 
-  // A thread reply with the screenshot when it is still on disk. If the upload fails, the reply is
-  // sent as text with the reason, so the summary is never posted twice for one missing file.
+  // A thread reply with the screenshot. When the file is gone or the upload fails, the reply is
+  // text with the reason.
   async function reply(channelId: string, threadTs: string, failure: Failure) {
     let text = failureText(failure)
-    const png = failure.screenshot && (await readFile(failure.screenshot).catch(() => null))
-    if (failure.screenshot && png) {
+    if (failure.screenshot) {
+      const path = failure.screenshot
       try {
-        return await upload(channelId, threadTs, text, failure.screenshot, png)
+        const png = await readFile(path).catch((err) => {
+          throw new Error(`the file is gone (${err.code ?? err.message})`)
+        })
+        return await upload(channelId, threadTs, text, path, png)
       } catch (err) {
-        text += `\n_(screenshot not attached: ${(err as Error).message})_`
+        text += `\n_(screenshot not attached: ${mrkdwn((err as Error).message)})_`
       }
     }
     await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text })
@@ -67,17 +87,28 @@ export function slackNotifier({ token, channel, apiUrl }: Settings): Notifier {
     name: 'slack',
     async runFinished(report) {
       const summary = await call('chat.postMessage', { channel, text: summaryText(report) })
-      // the answer has the channel's id, which file uploads need (SLACK_CHANNEL may be a name)
-      const channelId = String(summary.channel)
-      const threadTs = String(summary.ts)
-      for (const failure of report.failures) await reply(channelId, threadTs, failure)
-      if (report.moreFailures > 0) {
-        const more = `…and ${report.moreFailures} more failed scenarios${report.url ? ` (<${report.url}|see all>)` : ''}`
-        await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text: more })
+      // From here the run is in the channel: a failed reply must not post it again.
+      try {
+        // the answer has the channel's id, which file uploads need (SLACK_CHANNEL may be a name)
+        const channelId = String(summary.channel)
+        const threadTs = String(summary.ts)
+        for (const failure of report.failures) await reply(channelId, threadTs, failure)
+        if (report.moreFailures > 0) {
+          const link = report.url ? ` (<${report.url}|see all>)` : ''
+          const text = `…and ${report.moreFailures} more failed scenarios${link}`
+          await call('chat.postMessage', { channel: channelId, thread_ts: threadTs, text })
+        }
+      } catch (err) {
+        throw new PartialSendError(`the thread is incomplete: ${(err as Error).message}`)
       }
     },
   }
 }
+
+// Text from tests goes into Slack mrkdwn: &, < and > must be escaped, or `<!channel>` in an error
+// would ping everyone (https://api.slack.com/reference/surfaces/formatting#escaping).
+const mrkdwn = (text: string) =>
+  text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 
 function summaryText({ run, counts, url, flaky }: RunReport) {
   const icon = run.status === 'passed' ? ':white_check_mark:' : ':x:'
@@ -89,12 +120,14 @@ function summaryText({ run, counts, url, flaky }: RunReport) {
   const took = run.durationMs === null ? '' : ` · ${formatDuration(run.durationMs)}`
   return [
     `${icon} *${title} ${run.status}* · ${run.platform} · ${shown}${took}`,
-    `commit \`${run.commit.slice(0, 7)}\` · ${run.trigger}`,
-    ...(flaky.length > 0 ? [`flaky: ${flaky.join(', ')}`] : []),
+    `commit \`${run.commit.slice(0, 7)}\` · ${mrkdwn(run.trigger)}`,
+    ...(flaky.length > 0 ? [`flaky: ${mrkdwn(flaky.join(', '))}`] : []),
   ].join('\n')
 }
 
 function failureText({ scenarioId, device, error }: Failure) {
-  const firstLine = error?.split('\n')[0] ?? 'no error message'
-  return `:x: *${scenarioId}*${device ? ` on ${device}` : ''}\n\`\`\`${firstLine}\`\`\``
+  // the first line that says something; backticks would end the code block early
+  const line = error?.split('\n').find((l) => l.trim()) ?? 'no error message'
+  const where = device ? ` on ${mrkdwn(device)}` : ''
+  return `:x: *${mrkdwn(scenarioId)}*${where}\n\`\`\`${mrkdwn(line.replaceAll('`', "'"))}\`\`\``
 }

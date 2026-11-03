@@ -80,6 +80,6 @@ setInterval(
   24 * 60 * 60 * 1000,
 )
 
-startNotifications(app.log)
+await startNotifications(app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
