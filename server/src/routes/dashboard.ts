@@ -1,6 +1,6 @@
 // Read-only routes for the dashboard (web/). The browser signs in with basic auth (see main.ts).
 import { readFile } from 'node:fs/promises'
-import { ApiError, AttemptPage, DeviceList, RunDetail, RunList } from '@nowait/shared'
+import { ApiError, AttemptPage, DbIdParam, DeviceList, RunDetail, RunList } from '@nowait/shared'
 import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
@@ -8,18 +8,23 @@ import { db } from '../db/index.ts'
 import { devices, queue, results } from '../db/schema.ts'
 import { getRunDetail, listAttempts, listRuns } from '../queue.ts'
 
-const Id = z.coerce.number().int()
-
 export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/dashboard/api/runs',
-    { schema: { querystring: z.object({ before: Id.optional() }), response: { 200: RunList } } },
+    {
+      schema: {
+        querystring: z.object({ before: DbIdParam.optional() }),
+        response: { 200: RunList },
+      },
+    },
     async (req) => listRuns(req.query.before),
   )
 
   app.get(
     '/dashboard/api/runs/:id',
-    { schema: { params: z.object({ id: Id }), response: { 200: RunDetail, 404: ApiError } } },
+    {
+      schema: { params: z.object({ id: DbIdParam }), response: { 200: RunDetail, 404: ApiError } },
+    },
     async (req, reply) =>
       (await getRunDetail(req.params.id)) ?? reply.code(404).send({ error: 'run not found' }),
   )
@@ -28,8 +33,8 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     '/dashboard/api/runs/:id/attempts',
     {
       schema: {
-        params: z.object({ id: Id }),
-        querystring: z.object({ page: Id.min(0).max(100_000).default(0) }),
+        params: z.object({ id: DbIdParam }),
+        querystring: z.object({ page: z.coerce.number().int().min(0).max(100_000).default(0) }),
         response: { 200: AttemptPage, 404: ApiError },
       },
     },
@@ -67,7 +72,7 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
   // An attempt's screenshot or log. The path comes from the database, never from the URL.
   app.get(
     '/dashboard/api/attempts/:queueId/:file',
-    { schema: { params: z.object({ queueId: Id, file: z.enum(['screenshot', 'log']) }) } },
+    { schema: { params: z.object({ queueId: DbIdParam, file: z.enum(['screenshot', 'log']) }) } },
     async (req, reply) => {
       const result = await db.query.results.findFirst({
         where: eq(results.queueId, req.params.queueId),

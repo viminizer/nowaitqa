@@ -1,4 +1,4 @@
-import { ApiError, CreateRunBody, RunSummary } from '@nowait/shared'
+import { ApiError, CreateRunBody, DbIdParam, RunSummary } from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { BadRunError, createRun, getRun } from '../queue.ts'
@@ -18,7 +18,7 @@ export const runRoutes: FastifyPluginAsyncZod = async (app) => {
     '/runs/:id',
     {
       schema: {
-        params: z.object({ id: z.coerce.number().int() }),
+        params: z.object({ id: DbIdParam }),
         response: { 200: RunSummary, 404: ApiError },
       },
     },

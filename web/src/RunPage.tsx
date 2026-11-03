@@ -102,12 +102,13 @@ export function RunPage({ id, page }: { id: number; page: number }) {
   // the attempts load next to the summary, not after it
   return (
     <>
+      {/* the title shows while loading, like the other pages' */}
+      <h1>
+        Run #{id} {state.data && <Status status={state.data.status} />}
+      </h1>
       <Loaded state={state}>
         {(run) => (
           <>
-            <h1>
-              Run #{run.id} <Status status={run.status} />
-            </h1>
             <dl className="facts">
               <dt>Scenarios</dt>
               <dd>

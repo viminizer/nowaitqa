@@ -72,13 +72,16 @@ if (existsSync(WEB_DIST)) {
 
 await runMigrations()
 
-// Background jobs. Errors are logged, and the next tick tries again.
-setInterval(() => expireLeases().catch((err) => app.log.error(err, 'expireLeases failed')), 15_000)
-setInterval(() => expireRuns().catch((err) => app.log.error(err, 'expireRuns failed')), 60_000)
-setInterval(
-  () => deleteOldArtifacts().catch((err) => app.log.error(err, 'deleteOldArtifacts failed')),
-  24 * 60 * 60 * 1000,
-)
+// Background jobs: each runs once now, then every `ms`, so frequent restarts can't skip one (R48).
+// Errors are logged, and the next tick tries again.
+const every = (ms: number, name: string, job: () => Promise<unknown>) => {
+  const run = () => job().catch((err) => app.log.error(err, `${name} failed`))
+  run()
+  setInterval(run, ms)
+}
+every(15_000, 'expireLeases', expireLeases)
+every(60_000, 'expireRuns', expireRuns)
+every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts)
 
 await startNotifications(app.log)
 
