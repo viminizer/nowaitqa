@@ -286,9 +286,61 @@ tbody tr:last-child td {
   color: var(--muted);
   cursor: wait;
 }
-.action button:focus-visible {
+.action button:focus-visible,
+.start-run input:focus-visible,
+.start-run select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.start-run {
+  padding: calc(var(--space) * 2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.start-run h2 {
+  margin-top: 0;
+}
+.start-run fieldset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) auto;
+  align-items: end;
+  gap: calc(var(--space) * 2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.start-run label {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) / 2);
+  min-width: 0;
+}
+.start-run input,
+.start-run select {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(var(--space) / 2) var(--space);
+}
+.start-run .action {
+  margin-left: 0;
+}
+.start-run .error {
+  display: block;
+  margin-top: var(--space);
+}
+@media (max-width: 600px) {
+  .start-run fieldset {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Text for screen readers only */

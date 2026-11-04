@@ -36,10 +36,13 @@ export function useApi<T>(
   })
 }
 
-// Posts a dashboard action, then reloads every page's data, since an action can change any of it.
+// Posts an action once, then refreshes page data in the background. A slow read must not delay
+// successful navigation, and an offline action must fail rather than wait to replay later.
 // Resolves with the answer's JSON (null for 204).
 export function useAction() {
   return useMutation({
+    networkMode: 'always',
+    retry: false,
     mutationFn: async ({ path, body = {} }: { path: string; body?: object }) => {
       const res = await fetch(`/dashboard/api${path}`, {
         method: 'POST',
@@ -49,6 +52,8 @@ export function useAction() {
       if (!res.ok) throw await failure(res)
       return res.status === 204 ? null : ((await res.json()) as unknown)
     },
-    onSuccess: () => queryClient.invalidateQueries(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries()
+    },
   })
 }

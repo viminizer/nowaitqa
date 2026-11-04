@@ -256,6 +256,10 @@ Build it before you start the server: the server looks for it at startup. It the
 (any) and `DASHBOARD_PASSWORD`. It refreshes every 5 seconds (a finished run's page stops).
 
 It can also:
+- **Start a new run.** On Runs, choose Android or iOS Simulator and enter the app build URL or
+  Appium-host path. It uses the latest scenarios reported by a runner, shared queue assignment
+  and one pass, then opens the new run's progress page. Connection errors appear in the form,
+  which keeps its inputs if starting fails. Dashboard actions are attempted once when submitted.
 - **Turn a phone off or on.** A phone that is off finishes its current scenario, then takes no
   more. Its items in a `fixed` run go to the other phones.
 - **Cancel a running run.** Its open scenarios fail with "cancelled on the dashboard", and a phone

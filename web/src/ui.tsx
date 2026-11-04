@@ -100,16 +100,22 @@ export function Action({
       <button type="button" disabled={action.isPending} onClick={run}>
         {label}
       </button>
-      {action.error && (
-        <span className="error" role="alert">
-          {action.error.message}
-        </span>
-      )}
+      <ActionError error={action.error} />
     </span>
   )
 }
 
-// After "run again": the new run's page.
+export function ActionError({ error }: { error: Error | null }) {
+  return (
+    error && (
+      <span className="error" role="alert">
+        {error.message}
+      </span>
+    )
+  )
+}
+
+// After starting a run: the new run's page.
 export const openRun = (answer: unknown) => {
   location.hash = `#/runs/${CreatedRun.parse(answer).id}`
 }
