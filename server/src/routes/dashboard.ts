@@ -4,6 +4,7 @@ import {
   ApiError,
   AttemptPage,
   CreatedRun,
+  CreateRunBody,
   DbIdParam,
   DeviceEnabledBody,
   DeviceList,
@@ -20,6 +21,7 @@ import { devices, queue, results } from '../db/schema.ts'
 import {
   BadRunError,
   cancelRun,
+  createRun,
   getRunDetail,
   listAttempts,
   listRuns,
@@ -114,7 +116,7 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // --- actions: each is logged before it runs; Fastify logs its answer with the same reqId ---
 
-  // A new run from an old one. A refusal (still running, nothing failed, no phones) is a 400.
+  // A refusal (no scenarios, still running, nothing failed, no phones) is a 400.
   const started = async (start: Promise<number | null>, what: string, reply: FastifyReply) => {
     try {
       const id = await start
@@ -126,6 +128,20 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       throw err
     }
   }
+
+  app.post(
+    '/dashboard/api/runs',
+    {
+      schema: {
+        body: CreateRunBody,
+        response: { 201: CreatedRun, 400: ApiError },
+      },
+    },
+    async (req, reply) => {
+      req.log.info(`dashboard: start a ${req.body.platform} run`)
+      return started(createRun({ ...req.body, trigger: 'dashboard' }), 'run', reply)
+    },
+  )
 
   app.post(
     '/dashboard/api/runs/:id/again',
