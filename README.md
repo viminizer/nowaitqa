@@ -239,6 +239,9 @@ pnpm --filter @nowait/runner benchmark --app <apk path or URL> --repeat 10
 `POST /runs` takes the same options: `"split": "fixed" | "queue"` (default `queue`) and
 `"repeat": N` (put every scenario in the run N times).
 
+An [uneven-workload benchmark](docs/benchmarks/2026-11-05-uneven-workload.md) records all six measured
+runs, idle time, workload sources and limitations using two identical Android emulators.
+
 ## Dashboard
 
 Runs, each attempt with its error, screenshot and log, and the phones. A run's page has a timeline:

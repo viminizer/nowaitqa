@@ -1,0 +1,2965 @@
+{
+  "metadata": {
+    "date": "2026-11-05",
+    "applicationCommit": "d98a20d5c7782819639285d21e97050518e2c54f",
+    "fixtureCommit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+    "apkSha256": "a9eecf37b26cd084855c530db81c2bb1b91f4c1b095a04f47aa7c20e2791f686",
+    "scenarioOrder": ["a.long", "b.short", "c.short", "d.short"],
+    "repeat": 2,
+    "longTextEntries": 24,
+    "sessionMode": "reuse",
+    "emulatorCores": 4,
+    "emulatorMemoryMiB": 2048,
+    "gpu": "swiftshader_indirect",
+    "disabledFeatures": ["Vulkan"],
+    "setupHistory": "Warm-up runs 1 (two cores) and 2 (four cores) were cancelled after repeated System UI ANRs with Vulkan enabled. Retried four cores with Vulkan disabled and SwiftShader GLES before any measured run.",
+    "measuredOrder": ["fixed", "queue", "queue", "fixed", "fixed", "queue"],
+    "hardware": {
+      "cpu": "Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz",
+      "memoryBytes": 17179869184,
+      "macOS": "26.6.2"
+    },
+    "workloadSources": {
+      "a.long.ts": "import { textEntries,open,byId,byText,tap } from './helpers/ui.ts'\nexport default {id:\"a.long\",platforms:['android'],async run(driver){await textEntries(driver,24)}}\n",
+      "b.short.ts": "import { textEntries,open,byId,byText,tap } from './helpers/ui.ts'\nexport default {id:\"b.short\",platforms:['android'],async run(driver){await textEntries(driver,1)}}\n",
+      "c.short.ts": "import { textEntries,open,byId,byText,tap } from './helpers/ui.ts'\nexport default {id:\"c.short\",platforms:['android'],async run(driver){await open(driver,'Views','Controls','1. Light Theme');const box=driver.$(byId('io.appium.android.apis:id/check1'));await box.waitForDisplayed();await box.click();if(await box.getAttribute('checked')!=='true')throw new Error('checkbox did not check')}}\n",
+      "d.short.ts": "import { textEntries,open,byId,byText,tap } from './helpers/ui.ts'\nexport default {id:\"d.short\",platforms:['android'],async run(driver){await open(driver,'App','Alert Dialogs','OK Cancel dialog with a message');await driver.$(byId('android:id/alertTitle')).waitForDisplayed();await tap(driver,byId('android:id/button1'));await driver.$(byText('OK Cancel dialog with a message')).waitForDisplayed()}}\n",
+      "helpers/ui.ts": "import { appendFileSync } from 'node:fs'\nexport const byId = (id: string) => 'android=new UiSelector().resourceId(\"'+id+'\")'\nexport const byText = (text: string) => 'android=new UiSelector().text(\"'+text+'\")'\nexport async function tap(driver, selector) { const e=driver.$(selector);await e.waitForDisplayed();await e.click() }\nexport async function open(driver,...items) {for(const item of items)await tap(driver,byText(item))}\nexport async function textEntries(driver, count) {\n await open(driver,'Views','Controls','1. Light Theme')\n const field=driver.$(byId('io.appium.android.apis:id/edit'));await field.waitForDisplayed()\n for(let i=0;i<count;i++) {const value='entry-'+i;await field.setValue(value);await driver.waitUntil(async()=>await field.getText()===value)}\n}\n"
+    },
+    "node": "v22.20.0",
+    "pnpm": "11.21.0",
+    "emulatorVersion": "36.1.9",
+    "apkVersion": "6.0.18",
+    "apkReleaseUrl": "https://github.com/appium/android-apidemos/releases/tag/v6.0.18",
+    "androidApi": 36,
+    "androidVersion": "16",
+    "appiumVersion": "3.9.0",
+    "uiautomator2Version": "8.7.3",
+    "finalGpu": "swiftshader_indirect",
+    "readOnly": true,
+    "headless": true,
+    "measuredSampleSizePerMode": 3,
+    "warmupAttemptCount": 3,
+    "validWarmupCount": 1
+  },
+  "summary": {
+    "fixed": {
+      "durationSeconds": {
+        "median": 118.948,
+        "mean": 120.51533333333333,
+        "minimum": 115.2,
+        "maximum": 127.398,
+        "sampleStdDev": 6.248215852011941
+      },
+      "fleetIdleDeviceSeconds": {
+        "median": 66.201,
+        "mean": 66.657,
+        "minimum": 64.111,
+        "maximum": 69.659,
+        "sampleStdDev": 2.80196859368552
+      }
+    },
+    "queue": {
+      "durationSeconds": {
+        "median": 97.64,
+        "mean": 99.67,
+        "minimum": 95.307,
+        "maximum": 106.063,
+        "sampleStdDev": 5.658052580172793
+      },
+      "fleetIdleDeviceSeconds": {
+        "median": 1.86,
+        "mean": 2.0653333333333332,
+        "minimum": 0.438,
+        "maximum": 3.898,
+        "sampleStdDev": 1.7391151006570362
+      }
+    }
+  },
+  "pairs": [
+    {
+      "pair": 1,
+      "fixedRunId": 4,
+      "queueRunId": 5,
+      "timeReductionPercent": 16.746730717907653
+    },
+    {
+      "pair": 2,
+      "fixedRunId": 7,
+      "queueRunId": 6,
+      "timeReductionPercent": 17.913710192689237
+    },
+    {
+      "pair": 3,
+      "fixedRunId": 8,
+      "queueRunId": 9,
+      "timeReductionPercent": 17.26822916666667
+    }
+  ],
+  "runs": [
+    {
+      "runId": 1,
+      "split": "queue",
+      "warmup": true,
+      "measurementIndex": 0,
+      "summary": {
+        "id": 1,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "failed",
+        "createdAt": "2026-11-04T15:02:54.376Z",
+        "finishedAt": "2026-11-04T15:07:34.728Z",
+        "durationMs": 280352,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          },
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 3,
+            "busyMs": 260273,
+            "idleMs": 20079
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 256514,
+            "idleMs": 23838
+          }
+        ]
+      },
+      "detail": {
+        "id": 1,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "failed",
+        "createdAt": "2026-11-04T15:02:54.376Z",
+        "finishedAt": "2026-11-04T15:07:34.728Z",
+        "durationMs": 280352,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          },
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 3,
+            "busyMs": 260273,
+            "idleMs": 20079
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 256514,
+            "idleMs": 23838
+          }
+        ],
+        "now": "2026-11-04T15:07:35.430Z",
+        "timeline": [
+          {
+            "queueId": 2,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:02:54.463Z",
+            "finishedAt": "2026-11-04T15:04:05.433Z"
+          },
+          {
+            "queueId": 1,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:02:54.464Z",
+            "finishedAt": "2026-11-04T15:04:55.782Z"
+          },
+          {
+            "queueId": 3,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:04:05.507Z",
+            "finishedAt": "2026-11-04T15:04:26.997Z"
+          },
+          {
+            "queueId": 4,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:04:27.033Z",
+            "finishedAt": "2026-11-04T15:06:13.916Z"
+          },
+          {
+            "queueId": 5,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:04:55.857Z",
+            "finishedAt": "2026-11-04T15:06:19.872Z"
+          },
+          {
+            "queueId": 6,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:06:37.557Z",
+            "finishedAt": "2026-11-04T15:07:34.728Z"
+          },
+          {
+            "queueId": 7,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:06:39.788Z",
+            "finishedAt": "2026-11-04T15:07:34.728Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 4,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:04:27.033Z",
+          "finishedAt": "2026-11-04T15:06:13.916Z",
+          "durationMs": 74323,
+          "error": "Error: element (\"android=new UiSelector().text(\"App\")\") still not displayed after 15000ms\n    at <anonymous> (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:9056:27)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async tap (<fixture>/scenarios/helpers/ui.ts:4:74)\n    at async open (<fixture>/scenarios/helpers/ui.ts:5:70)\n    at async Object.run (<fixture>/scenarios/d.short.ts:2:70)\n    at async runScenario (<application>/runner/src/scenario.ts:29:5)",
+          "screenshot": true,
+          "log": true
+        },
+        {
+          "queueId": 5,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:04:55.857Z",
+          "finishedAt": "2026-11-04T15:06:19.872Z",
+          "durationMs": 27505,
+          "error": "Error: element (\"android=new UiSelector().text(\"Views\")\") still not displayed after 15000ms\n    at <anonymous> (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:9056:27)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async tap (<fixture>/scenarios/helpers/ui.ts:4:74)\n    at async open (<fixture>/scenarios/helpers/ui.ts:5:70)\n    at async textEntries (<fixture>/scenarios/helpers/ui.ts:7:2)\n    at async Object.run (<fixture>/scenarios/a.long.ts:2:69)\n    at async runScenario (<application>/runner/src/scenario.ts:29:5)",
+          "screenshot": true,
+          "log": true
+        },
+        {
+          "queueId": 6,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:06:37.557Z",
+          "finishedAt": "2026-11-04T15:07:34.728Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 7,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:06:39.788Z",
+          "finishedAt": "2026-11-04T15:07:34.728Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 8,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:07:34.728Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 9,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 2,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:07:34.728Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 10,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 2,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:07:34.728Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 1,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:02:54.464Z",
+          "finishedAt": "2026-11-04T15:04:55.782Z",
+          "durationMs": 62331,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 2,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:02:54.463Z",
+          "finishedAt": "2026-11-04T15:04:05.433Z",
+          "durationMs": 15088,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 3,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:04:05.507Z",
+          "finishedAt": "2026-11-04T15:04:26.997Z",
+          "durationMs": 18589,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 2,
+      "split": "queue",
+      "warmup": true,
+      "measurementIndex": 0,
+      "summary": {
+        "id": 2,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "failed",
+        "createdAt": "2026-11-04T15:14:18.954Z",
+        "finishedAt": "2026-11-04T15:18:08.063Z",
+        "durationMs": 229109,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 3,
+            "busyMs": 213316,
+            "idleMs": 15793
+          },
+          {
+            "name": "bench-b",
+            "attempts": 2,
+            "busyMs": 189185,
+            "idleMs": 39924
+          }
+        ]
+      },
+      "detail": {
+        "id": 2,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "failed",
+        "createdAt": "2026-11-04T15:14:18.954Z",
+        "finishedAt": "2026-11-04T15:18:08.063Z",
+        "durationMs": 229109,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "failed"
+          },
+          {
+            "id": "b.short",
+            "status": "failed"
+          },
+          {
+            "id": "c.short",
+            "status": "failed"
+          },
+          {
+            "id": "d.short",
+            "status": "failed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 3,
+            "busyMs": 213316,
+            "idleMs": 15793
+          },
+          {
+            "name": "bench-b",
+            "attempts": 2,
+            "busyMs": 189185,
+            "idleMs": 39924
+          }
+        ],
+        "now": "2026-11-04T15:18:09.278Z",
+        "timeline": [
+          {
+            "queueId": 14,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:14:19.078Z",
+            "finishedAt": "2026-11-04T15:16:12.845Z"
+          },
+          {
+            "queueId": 18,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:14:48.826Z",
+            "finishedAt": "2026-11-04T15:16:36.964Z"
+          },
+          {
+            "queueId": 11,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:16:13.040Z",
+            "finishedAt": "2026-11-04T15:16:44.909Z"
+          },
+          {
+            "queueId": 19,
+            "scenarioId": "d.short",
+            "attempt": 2,
+            "device": "bench-b",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:16:47.015Z",
+            "finishedAt": "2026-11-04T15:18:08.063Z"
+          },
+          {
+            "queueId": 15,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "failed",
+            "leasedAt": "2026-11-04T15:17:00.382Z",
+            "finishedAt": "2026-11-04T15:18:08.063Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 11,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:16:13.040Z",
+          "finishedAt": "2026-11-04T15:16:44.909Z",
+          "durationMs": 18170,
+          "error": "Error: element (\"android=new UiSelector().text(\"Views\")\") still not displayed after 15000ms\n    at <anonymous> (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:9056:27)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async tap (<fixture>/scenarios/helpers/ui.ts:4:74)\n    at async open (<fixture>/scenarios/helpers/ui.ts:5:70)\n    at async textEntries (<fixture>/scenarios/helpers/ui.ts:7:2)\n    at async Object.run (<fixture>/scenarios/a.long.ts:2:69)\n    at async runScenario (<application>/runner/src/scenario.ts:29:5)",
+          "screenshot": true,
+          "log": true
+        },
+        {
+          "queueId": 12,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 13,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 15,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:17:00.382Z",
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 16,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 17,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 18,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:14:48.826Z",
+          "finishedAt": "2026-11-04T15:16:36.964Z",
+          "durationMs": 27924,
+          "error": "Error: element (\"android=new UiSelector().text(\"App\")\") still not displayed after 15000ms\n    at <anonymous> (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:9056:27)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async invokeElementCommand (<application>/node_modules/.pnpm/webdriverio@10.1.0_supports-color@7.2.0/node_modules/webdriverio/build/node.js:16375:20)\n    at async Element.wrapCommandFn (<application>/node_modules/.pnpm/@wdio+utils@10.1.0_supports-color@7.2.0/node_modules/@wdio/utils/build/index.js:1422:23)\n    at async tap (<fixture>/scenarios/helpers/ui.ts:4:74)\n    at async open (<fixture>/scenarios/helpers/ui.ts:5:70)\n    at async Object.run (<fixture>/scenarios/d.short.ts:2:70)\n    at async runScenario (<application>/runner/src/scenario.ts:29:5)\n    at async runWorker (<application>/runner/src/worker.ts:65:22)",
+          "screenshot": true,
+          "log": true
+        },
+        {
+          "queueId": 19,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 2,
+          "device": "bench-b",
+          "status": "failed",
+          "leasedAt": "2026-11-04T15:16:47.015Z",
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 20,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 2,
+          "device": null,
+          "status": "failed",
+          "leasedAt": null,
+          "finishedAt": "2026-11-04T15:18:08.063Z",
+          "durationMs": 0,
+          "error": "cancelled on the dashboard",
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 14,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:14:19.078Z",
+          "finishedAt": "2026-11-04T15:16:12.845Z",
+          "durationMs": 18531,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 3,
+      "split": "queue",
+      "warmup": true,
+      "measurementIndex": 0,
+      "summary": {
+        "id": 3,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:21:42.241Z",
+        "finishedAt": "2026-11-04T15:25:26.754Z",
+        "durationMs": 224513,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 6,
+            "busyMs": 221474,
+            "idleMs": 3039
+          },
+          {
+            "name": "bench-b",
+            "attempts": 2,
+            "busyMs": 194779,
+            "idleMs": 29734
+          }
+        ]
+      },
+      "detail": {
+        "id": 3,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark warmup",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:21:42.241Z",
+        "finishedAt": "2026-11-04T15:25:26.754Z",
+        "durationMs": 224513,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 6,
+            "busyMs": 221474,
+            "idleMs": 3039
+          },
+          {
+            "name": "bench-b",
+            "attempts": 2,
+            "busyMs": 194779,
+            "idleMs": 29734
+          }
+        ],
+        "now": "2026-11-04T15:25:28.651Z",
+        "timeline": [
+          {
+            "queueId": 21,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:21:42.278Z",
+            "finishedAt": "2026-11-04T15:23:40.357Z"
+          },
+          {
+            "queueId": 25,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:22:11.954Z",
+            "finishedAt": "2026-11-04T15:25:09.805Z"
+          },
+          {
+            "queueId": 23,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:23:40.388Z",
+            "finishedAt": "2026-11-04T15:24:10.926Z"
+          },
+          {
+            "queueId": 27,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:24:10.966Z",
+            "finishedAt": "2026-11-04T15:24:34.860Z"
+          },
+          {
+            "queueId": 24,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:24:34.880Z",
+            "finishedAt": "2026-11-04T15:24:56.657Z"
+          },
+          {
+            "queueId": 28,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:24:56.669Z",
+            "finishedAt": "2026-11-04T15:25:10.235Z"
+          },
+          {
+            "queueId": 22,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:25:09.825Z",
+            "finishedAt": "2026-11-04T15:25:26.754Z"
+          },
+          {
+            "queueId": 26,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:25:10.260Z",
+            "finishedAt": "2026-11-04T15:25:23.878Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 21,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:21:42.278Z",
+          "finishedAt": "2026-11-04T15:23:40.357Z",
+          "durationMs": 49985,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 22,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:25:09.825Z",
+          "finishedAt": "2026-11-04T15:25:26.754Z",
+          "durationMs": 12684,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 23,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:23:40.388Z",
+          "finishedAt": "2026-11-04T15:24:10.926Z",
+          "durationMs": 23204,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 24,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:24:34.880Z",
+          "finishedAt": "2026-11-04T15:24:56.657Z",
+          "durationMs": 16044,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 25,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:22:11.954Z",
+          "finishedAt": "2026-11-04T15:25:09.805Z",
+          "durationMs": 63627,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 26,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:25:10.260Z",
+          "finishedAt": "2026-11-04T15:25:23.878Z",
+          "durationMs": 10895,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 27,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:24:10.966Z",
+          "finishedAt": "2026-11-04T15:24:34.860Z",
+          "durationMs": 19668,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 28,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:24:56.669Z",
+          "finishedAt": "2026-11-04T15:25:10.235Z",
+          "durationMs": 11194,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 4,
+      "split": "fixed",
+      "warmup": false,
+      "measurementIndex": 1,
+      "summary": {
+        "id": 4,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 1",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:25:28.730Z",
+        "finishedAt": "2026-11-04T15:27:36.128Z",
+        "durationMs": 127398,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 127193,
+            "idleMs": 205
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 57944,
+            "idleMs": 69454
+          }
+        ]
+      },
+      "detail": {
+        "id": 4,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 1",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:25:28.730Z",
+        "finishedAt": "2026-11-04T15:27:36.128Z",
+        "durationMs": 127398,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 127193,
+            "idleMs": 205
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 57944,
+            "idleMs": 69454
+          }
+        ],
+        "now": "2026-11-04T15:27:38.030Z",
+        "timeline": [
+          {
+            "queueId": 32,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:25:28.776Z",
+            "finishedAt": "2026-11-04T15:25:52.418Z"
+          },
+          {
+            "queueId": 29,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:25:28.776Z",
+            "finishedAt": "2026-11-04T15:26:32.984Z"
+          },
+          {
+            "queueId": 36,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:25:52.431Z",
+            "finishedAt": "2026-11-04T15:26:03.855Z"
+          },
+          {
+            "queueId": 30,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:26:03.865Z",
+            "finishedAt": "2026-11-04T15:26:14.930Z"
+          },
+          {
+            "queueId": 34,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:26:14.969Z",
+            "finishedAt": "2026-11-04T15:26:26.781Z"
+          },
+          {
+            "queueId": 33,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:26:33.081Z",
+            "finishedAt": "2026-11-04T15:27:19.574Z"
+          },
+          {
+            "queueId": 31,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:27:19.622Z",
+            "finishedAt": "2026-11-04T15:27:27.168Z"
+          },
+          {
+            "queueId": 35,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:27:27.181Z",
+            "finishedAt": "2026-11-04T15:27:36.128Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 29,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:25:28.776Z",
+          "finishedAt": "2026-11-04T15:26:32.984Z",
+          "durationMs": 44563,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 30,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:26:03.865Z",
+          "finishedAt": "2026-11-04T15:26:14.930Z",
+          "durationMs": 9212,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 31,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:27:19.622Z",
+          "finishedAt": "2026-11-04T15:27:27.168Z",
+          "durationMs": 6131,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 32,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:25:28.776Z",
+          "finishedAt": "2026-11-04T15:25:52.418Z",
+          "durationMs": 5874,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 33,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:26:33.081Z",
+          "finishedAt": "2026-11-04T15:27:19.574Z",
+          "durationMs": 44629,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 34,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:26:14.969Z",
+          "finishedAt": "2026-11-04T15:26:26.781Z",
+          "durationMs": 9974,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 35,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:27:27.181Z",
+          "finishedAt": "2026-11-04T15:27:36.128Z",
+          "durationMs": 7688,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 36,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:25:52.431Z",
+          "finishedAt": "2026-11-04T15:26:03.855Z",
+          "durationMs": 8785,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 5,
+      "split": "queue",
+      "warmup": false,
+      "measurementIndex": 2,
+      "summary": {
+        "id": 5,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 2",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:27:38.084Z",
+        "finishedAt": "2026-11-04T15:29:24.147Z",
+        "durationMs": 106063,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 104396,
+            "idleMs": 1667
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 105870,
+            "idleMs": 193
+          }
+        ]
+      },
+      "detail": {
+        "id": 5,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 2",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:27:38.084Z",
+        "finishedAt": "2026-11-04T15:29:24.147Z",
+        "durationMs": 106063,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 104396,
+            "idleMs": 1667
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 105870,
+            "idleMs": 193
+          }
+        ],
+        "now": "2026-11-04T15:29:25.389Z",
+        "timeline": [
+          {
+            "queueId": 37,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:27:38.237Z",
+            "finishedAt": "2026-11-04T15:28:39.568Z"
+          },
+          {
+            "queueId": 41,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:27:38.237Z",
+            "finishedAt": "2026-11-04T15:28:38.828Z"
+          },
+          {
+            "queueId": 39,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:28:38.838Z",
+            "finishedAt": "2026-11-04T15:28:49.579Z"
+          },
+          {
+            "queueId": 43,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:28:39.582Z",
+            "finishedAt": "2026-11-04T15:28:51.068Z"
+          },
+          {
+            "queueId": 40,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:28:49.590Z",
+            "finishedAt": "2026-11-04T15:29:06.053Z"
+          },
+          {
+            "queueId": 44,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:28:51.080Z",
+            "finishedAt": "2026-11-04T15:29:06.375Z"
+          },
+          {
+            "queueId": 38,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:29:06.072Z",
+            "finishedAt": "2026-11-04T15:29:22.672Z"
+          },
+          {
+            "queueId": 42,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:29:06.390Z",
+            "finishedAt": "2026-11-04T15:29:24.147Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 37,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:27:38.237Z",
+          "finishedAt": "2026-11-04T15:28:39.568Z",
+          "durationMs": 45514,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 38,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:29:06.072Z",
+          "finishedAt": "2026-11-04T15:29:22.672Z",
+          "durationMs": 13727,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 39,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:28:38.838Z",
+          "finishedAt": "2026-11-04T15:28:49.579Z",
+          "durationMs": 9253,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 40,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:28:49.590Z",
+          "finishedAt": "2026-11-04T15:29:06.053Z",
+          "durationMs": 13927,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 41,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:27:38.237Z",
+          "finishedAt": "2026-11-04T15:28:38.828Z",
+          "durationMs": 45260,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 42,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:29:06.390Z",
+          "finishedAt": "2026-11-04T15:29:24.147Z",
+          "durationMs": 14527,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 43,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:28:39.582Z",
+          "finishedAt": "2026-11-04T15:28:51.068Z",
+          "durationMs": 9362,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 44,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:28:51.080Z",
+          "finishedAt": "2026-11-04T15:29:06.375Z",
+          "durationMs": 12687,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 6,
+      "split": "queue",
+      "warmup": false,
+      "measurementIndex": 3,
+      "summary": {
+        "id": 6,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 3",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:29:25.414Z",
+        "finishedAt": "2026-11-04T15:31:03.054Z",
+        "durationMs": 97640,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 93816,
+            "idleMs": 3824
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 97566,
+            "idleMs": 74
+          }
+        ]
+      },
+      "detail": {
+        "id": 6,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 3",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:29:25.414Z",
+        "finishedAt": "2026-11-04T15:31:03.054Z",
+        "durationMs": 97640,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 93816,
+            "idleMs": 3824
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 97566,
+            "idleMs": 74
+          }
+        ],
+        "now": "2026-11-04T15:31:04.274Z",
+        "timeline": [
+          {
+            "queueId": 45,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:29:25.440Z",
+            "finishedAt": "2026-11-04T15:30:24.022Z"
+          },
+          {
+            "queueId": 49,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:29:25.441Z",
+            "finishedAt": "2026-11-04T15:30:22.542Z"
+          },
+          {
+            "queueId": 47,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:22.552Z",
+            "finishedAt": "2026-11-04T15:30:30.674Z"
+          },
+          {
+            "queueId": 51,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:24.034Z",
+            "finishedAt": "2026-11-04T15:30:33.823Z"
+          },
+          {
+            "queueId": 48,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:30.690Z",
+            "finishedAt": "2026-11-04T15:30:42.452Z"
+          },
+          {
+            "queueId": 52,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:33.848Z",
+            "finishedAt": "2026-11-04T15:30:47.424Z"
+          },
+          {
+            "queueId": 46,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:42.476Z",
+            "finishedAt": "2026-11-04T15:30:59.307Z"
+          },
+          {
+            "queueId": 50,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:30:47.434Z",
+            "finishedAt": "2026-11-04T15:31:03.054Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 45,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:29:25.440Z",
+          "finishedAt": "2026-11-04T15:30:24.022Z",
+          "durationMs": 43497,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 46,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:42.476Z",
+          "finishedAt": "2026-11-04T15:30:59.307Z",
+          "durationMs": 14548,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 47,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:22.552Z",
+          "finishedAt": "2026-11-04T15:30:30.674Z",
+          "durationMs": 6984,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 48,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:30.690Z",
+          "finishedAt": "2026-11-04T15:30:42.452Z",
+          "durationMs": 10128,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 49,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:29:25.441Z",
+          "finishedAt": "2026-11-04T15:30:22.542Z",
+          "durationMs": 43501,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 50,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:47.434Z",
+          "finishedAt": "2026-11-04T15:31:03.054Z",
+          "durationMs": 12696,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 51,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:24.034Z",
+          "finishedAt": "2026-11-04T15:30:33.823Z",
+          "durationMs": 8652,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 52,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:30:33.848Z",
+          "finishedAt": "2026-11-04T15:30:47.424Z",
+          "durationMs": 11809,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 7,
+      "split": "fixed",
+      "warmup": false,
+      "measurementIndex": 4,
+      "summary": {
+        "id": 7,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 4",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:31:04.300Z",
+        "finishedAt": "2026-11-04T15:33:03.248Z",
+        "durationMs": 118948,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 118804,
+            "idleMs": 144
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 54981,
+            "idleMs": 63967
+          }
+        ]
+      },
+      "detail": {
+        "id": 7,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 4",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:31:04.300Z",
+        "finishedAt": "2026-11-04T15:33:03.248Z",
+        "durationMs": 118948,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 118804,
+            "idleMs": 144
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 54981,
+            "idleMs": 63967
+          }
+        ],
+        "now": "2026-11-04T15:33:05.261Z",
+        "timeline": [
+          {
+            "queueId": 53,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:31:04.330Z",
+            "finishedAt": "2026-11-04T15:32:03.301Z"
+          },
+          {
+            "queueId": 54,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:31:04.330Z",
+            "finishedAt": "2026-11-04T15:31:26.227Z"
+          },
+          {
+            "queueId": 58,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:31:26.236Z",
+            "finishedAt": "2026-11-04T15:31:37.130Z"
+          },
+          {
+            "queueId": 56,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:31:37.158Z",
+            "finishedAt": "2026-11-04T15:31:47.899Z"
+          },
+          {
+            "queueId": 60,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:31:47.910Z",
+            "finishedAt": "2026-11-04T15:31:59.359Z"
+          },
+          {
+            "queueId": 57,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:32:03.360Z",
+            "finishedAt": "2026-11-04T15:32:48.727Z"
+          },
+          {
+            "queueId": 55,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:32:48.763Z",
+            "finishedAt": "2026-11-04T15:32:55.960Z"
+          },
+          {
+            "queueId": 59,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:32:55.980Z",
+            "finishedAt": "2026-11-04T15:33:03.248Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 53,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:31:04.330Z",
+          "finishedAt": "2026-11-04T15:32:03.301Z",
+          "durationMs": 43960,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 54,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:31:04.330Z",
+          "finishedAt": "2026-11-04T15:31:26.227Z",
+          "durationMs": 7231,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 55,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:32:48.763Z",
+          "finishedAt": "2026-11-04T15:32:55.960Z",
+          "durationMs": 6003,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 56,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:31:37.158Z",
+          "finishedAt": "2026-11-04T15:31:47.899Z",
+          "durationMs": 8761,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 57,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:32:03.360Z",
+          "finishedAt": "2026-11-04T15:32:48.727Z",
+          "durationMs": 43799,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 58,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:31:26.236Z",
+          "finishedAt": "2026-11-04T15:31:37.130Z",
+          "durationMs": 9306,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 59,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:32:55.980Z",
+          "finishedAt": "2026-11-04T15:33:03.248Z",
+          "durationMs": 6288,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 60,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:31:47.910Z",
+          "finishedAt": "2026-11-04T15:31:59.359Z",
+          "durationMs": 9577,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 8,
+      "split": "fixed",
+      "warmup": false,
+      "measurementIndex": 5,
+      "summary": {
+        "id": 8,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 5",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:33:05.284Z",
+        "finishedAt": "2026-11-04T15:35:00.484Z",
+        "durationMs": 115200,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 115083,
+            "idleMs": 117
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 49116,
+            "idleMs": 66084
+          }
+        ]
+      },
+      "detail": {
+        "id": 8,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 5",
+        "split": "fixed",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:33:05.284Z",
+        "finishedAt": "2026-11-04T15:35:00.484Z",
+        "durationMs": 115200,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 115083,
+            "idleMs": 117
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 49116,
+            "idleMs": 66084
+          }
+        ],
+        "now": "2026-11-04T15:35:02.237Z",
+        "timeline": [
+          {
+            "queueId": 61,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:05.294Z",
+            "finishedAt": "2026-11-04T15:33:59.129Z"
+          },
+          {
+            "queueId": 62,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:05.294Z",
+            "finishedAt": "2026-11-04T15:33:22.179Z"
+          },
+          {
+            "queueId": 66,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:22.187Z",
+            "finishedAt": "2026-11-04T15:33:32.501Z"
+          },
+          {
+            "queueId": 64,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:32.512Z",
+            "finishedAt": "2026-11-04T15:33:43.508Z"
+          },
+          {
+            "queueId": 68,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:43.533Z",
+            "finishedAt": "2026-11-04T15:33:54.455Z"
+          },
+          {
+            "queueId": 65,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:33:59.177Z",
+            "finishedAt": "2026-11-04T15:34:46.407Z"
+          },
+          {
+            "queueId": 63,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:34:46.456Z",
+            "finishedAt": "2026-11-04T15:34:53.482Z"
+          },
+          {
+            "queueId": 67,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:34:53.491Z",
+            "finishedAt": "2026-11-04T15:35:00.484Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 61,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:05.294Z",
+          "finishedAt": "2026-11-04T15:33:59.129Z",
+          "durationMs": 43076,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 62,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:05.294Z",
+          "finishedAt": "2026-11-04T15:33:22.179Z",
+          "durationMs": 6158,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 63,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:34:46.456Z",
+          "finishedAt": "2026-11-04T15:34:53.482Z",
+          "durationMs": 5881,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 64,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:32.512Z",
+          "finishedAt": "2026-11-04T15:33:43.508Z",
+          "durationMs": 9335,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 65,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:59.177Z",
+          "finishedAt": "2026-11-04T15:34:46.407Z",
+          "durationMs": 45568,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 66,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:22.187Z",
+          "finishedAt": "2026-11-04T15:33:32.501Z",
+          "durationMs": 8904,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 67,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:34:53.491Z",
+          "finishedAt": "2026-11-04T15:35:00.484Z",
+          "durationMs": 6030,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 68,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:33:43.533Z",
+          "finishedAt": "2026-11-04T15:33:54.455Z",
+          "durationMs": 8883,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    },
+    {
+      "runId": 9,
+      "split": "queue",
+      "warmup": false,
+      "measurementIndex": 6,
+      "summary": {
+        "id": 9,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 6",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:35:02.278Z",
+        "finishedAt": "2026-11-04T15:36:37.585Z",
+        "durationMs": 95307,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 94939,
+            "idleMs": 368
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 95237,
+            "idleMs": 70
+          }
+        ]
+      },
+      "detail": {
+        "id": 9,
+        "platform": "android",
+        "appBuild": "ApiDemos-debug.apk",
+        "commit": "7ffea3cd9f4c88fb8ed59fb62ad9e57d2c1b3af2",
+        "trigger": "uneven benchmark measurement 6",
+        "split": "queue",
+        "status": "passed",
+        "createdAt": "2026-11-04T15:35:02.278Z",
+        "finishedAt": "2026-11-04T15:36:37.585Z",
+        "durationMs": 95307,
+        "scenarios": [
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          },
+          {
+            "id": "a.long",
+            "status": "passed"
+          },
+          {
+            "id": "b.short",
+            "status": "passed"
+          },
+          {
+            "id": "c.short",
+            "status": "passed"
+          },
+          {
+            "id": "d.short",
+            "status": "passed"
+          }
+        ],
+        "devices": [
+          {
+            "name": "bench-a",
+            "attempts": 4,
+            "busyMs": 94939,
+            "idleMs": 368
+          },
+          {
+            "name": "bench-b",
+            "attempts": 4,
+            "busyMs": 95237,
+            "idleMs": 70
+          }
+        ],
+        "now": "2026-11-04T15:36:39.110Z",
+        "timeline": [
+          {
+            "queueId": 73,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:35:02.312Z",
+            "finishedAt": "2026-11-04T15:35:58.734Z"
+          },
+          {
+            "queueId": 69,
+            "scenarioId": "a.long",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:35:02.312Z",
+            "finishedAt": "2026-11-04T15:35:58.834Z"
+          },
+          {
+            "queueId": 70,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:35:58.742Z",
+            "finishedAt": "2026-11-04T15:36:08.989Z"
+          },
+          {
+            "queueId": 74,
+            "scenarioId": "b.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:35:58.840Z",
+            "finishedAt": "2026-11-04T15:36:09.695Z"
+          },
+          {
+            "queueId": 72,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:36:09.003Z",
+            "finishedAt": "2026-11-04T15:36:22.934Z"
+          },
+          {
+            "queueId": 76,
+            "scenarioId": "d.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:36:09.707Z",
+            "finishedAt": "2026-11-04T15:36:23.300Z"
+          },
+          {
+            "queueId": 71,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-a",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:36:22.945Z",
+            "finishedAt": "2026-11-04T15:36:37.285Z"
+          },
+          {
+            "queueId": 75,
+            "scenarioId": "c.short",
+            "attempt": 1,
+            "device": "bench-b",
+            "status": "passed",
+            "leasedAt": "2026-11-04T15:36:23.317Z",
+            "finishedAt": "2026-11-04T15:36:37.585Z"
+          }
+        ],
+        "timelineCut": false
+      },
+      "attempts": [
+        {
+          "queueId": 69,
+          "slot": 0,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:35:02.312Z",
+          "finishedAt": "2026-11-04T15:35:58.834Z",
+          "durationMs": 44254,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 70,
+          "slot": 1,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:35:58.742Z",
+          "finishedAt": "2026-11-04T15:36:08.989Z",
+          "durationMs": 8474,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 71,
+          "slot": 2,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:36:22.945Z",
+          "finishedAt": "2026-11-04T15:36:37.285Z",
+          "durationMs": 11639,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 72,
+          "slot": 3,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:36:09.003Z",
+          "finishedAt": "2026-11-04T15:36:22.934Z",
+          "durationMs": 12222,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 73,
+          "slot": 4,
+          "scenarioId": "a.long",
+          "attempt": 1,
+          "device": "bench-a",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:35:02.312Z",
+          "finishedAt": "2026-11-04T15:35:58.734Z",
+          "durationMs": 44108,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 74,
+          "slot": 5,
+          "scenarioId": "b.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:35:58.840Z",
+          "finishedAt": "2026-11-04T15:36:09.695Z",
+          "durationMs": 8857,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 75,
+          "slot": 6,
+          "scenarioId": "c.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:36:23.317Z",
+          "finishedAt": "2026-11-04T15:36:37.585Z",
+          "durationMs": 11433,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        },
+        {
+          "queueId": 76,
+          "slot": 7,
+          "scenarioId": "d.short",
+          "attempt": 1,
+          "device": "bench-b",
+          "status": "passed",
+          "leasedAt": "2026-11-04T15:36:09.707Z",
+          "finishedAt": "2026-11-04T15:36:23.300Z",
+          "durationMs": 11416,
+          "error": null,
+          "screenshot": false,
+          "log": false
+        }
+      ]
+    }
+  ]
+}
