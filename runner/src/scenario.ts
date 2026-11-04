@@ -21,7 +21,10 @@ export async function runScenario(
       )
     }
 
-    await driver.getLogs(logType(device)) // drain old log lines, so the log holds only this scenario
+    // Logging is evidence, not a prerequisite for running a scenario (R50).
+    await driver
+      .getLogs(logType(device)) // drain old lines, so failure evidence belongs to this scenario
+      .catch((err) => log(device.name, 'could not drain the device log', err))
     log(device.name, `run ${lease.runId}: ${lease.scenarioId} (attempt ${lease.attempt})`)
     await withTimeout(scenario.run(driver, account(lease)), config.SCENARIO_TIMEOUT_SECONDS)
     return { ...result, status: 'passed', durationMs: Date.now() - started }

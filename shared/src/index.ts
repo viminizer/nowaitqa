@@ -15,19 +15,39 @@ export const DbIdParam = z
 export const Platform = z.enum(['android', 'ios'])
 export type Platform = z.infer<typeof Platform>
 
-export const Device = z.object({
+const DeviceFields = z.object({
   name: z.string().min(1),
   platform: Platform,
   udid: z.string().min(1),
   appiumUrl: z.url(),
-  systemPort: z.number().int().positive().max(65_535), // systemPort (Android) or wdaLocalPort (iOS)
+  systemPort: z.number().int().positive().max(65_535), // iOS also reserves the following port (MJPEG)
   host: z.string().min(1), // which machine the phone is plugged into
   enabled: z.boolean().default(true),
 })
+
+function checkSimulator(
+  device: { platform: string; udid: string; systemPort: number },
+  ctx: z.RefinementCtx,
+) {
+  if (device.platform !== 'ios') return
+  if (!z.uuid().safeParse(device.udid).success) {
+    ctx.addIssue({ code: 'custom', path: ['udid'], message: 'iOS requires a Simulator UUID' })
+  }
+  if (device.systemPort === 65_535) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['systemPort'],
+      message: 'iOS needs this port and the next one',
+    })
+  }
+}
+export const Device = DeviceFields.superRefine(checkSimulator)
 export type Device = z.infer<typeof Device>
 // PUT /devices: without `enabled`, a new phone is on and a known one keeps its setting (the
 // dashboard may have turned it off).
-export const DeviceBody = Device.extend({ enabled: z.boolean().optional() })
+export const DeviceBody = DeviceFields.extend({ enabled: z.boolean().optional() }).superRefine(
+  checkSimulator,
+)
 
 // A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
@@ -47,7 +67,7 @@ export type Catalog = z.infer<typeof Catalog>
 
 export const CreateRunBody = z.object({
   platform: Platform,
-  appBuild: z.string().min(1), // URL or path of the APK / IPA
+  appBuild: z.string().min(1), // URL or Appium-host path: Android APK or iOS Simulator .app / .app.zip
   commit: Commit.optional(), // the scenarios' commit; default: the newest catalog a runner sent
   trigger: z.string().default('manual'),
   // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
@@ -206,7 +226,7 @@ export type AttemptPage = z.infer<typeof AttemptPage>
 // A phone and what it does now. busy: the attempt it holds a lease for.
 export const DeviceList = z.object({
   devices: z.array(
-    Device.extend({
+    Device.safeExtend({
       busy: z.object({ runId: z.number().int(), scenarioId: z.string() }).nullable(),
       lastWorkAt: z.coerce.date().nullable(), // when it last finished an attempt
     }),

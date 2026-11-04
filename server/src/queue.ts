@@ -110,13 +110,11 @@ const EXPECTED_FROM = 10
 async function expectedTimes(platform: Run['platform'], scenarioIds: string[]) {
   const ids = [...new Set(scenarioIds)]
   // one small index read per scenario (results_passed_idx), not the whole history.
-  // ponytail: results has no platform, so a scenario id run on both platforms reads past the other
-  // platform's passes; add a platform column to results when iOS comes.
   const rows = await db.execute<{ id: string; ms: number | null }>(sql`
     SELECT s.id, (
       SELECT round(avg(last.duration_ms))::int FROM (
-        SELECT r.duration_ms FROM ${results} r JOIN ${runs} ru ON ru.id = r.run_id
-        WHERE r.scenario_id = s.id AND r.status = 'passed' AND ru.platform = ${platform}
+        SELECT r.duration_ms FROM ${results} r
+        WHERE r.scenario_id = s.id AND r.status = 'passed' AND r.platform = ${platform}
         ORDER BY r.id DESC LIMIT ${EXPECTED_FROM}) last
     ) AS ms
     FROM unnest(${sql.param(ids)}::text[]) AS s(id)`)
@@ -698,6 +696,7 @@ function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
     queueId: row.id,
     runId: row.runId,
     scenarioId: row.scenarioId,
+    platform: sql`(SELECT platform FROM ${runs} WHERE id = ${row.runId})`,
     attempt: row.attempt,
     device: row.device,
     ...outcome,
