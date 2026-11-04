@@ -174,14 +174,16 @@ tbody tr:last-child td {
 
 /* Status colors: text in badges and counts, fill in timeline blocks. */
 .status-passed,
-.status-idle {
+.status-idle,
+.status-online {
   --c: var(--passed);
 }
 .status-flaky,
 .status-paused {
   --c: var(--flaky);
 }
-.status-failed {
+.status-failed,
+.status-offline {
   --c: var(--failed);
 }
 .status-running,
@@ -190,11 +192,13 @@ tbody tr:last-child td {
   --c: var(--running);
 }
 .status-pending,
-.status-disabled {
+.status-disabled,
+.status-waiting {
   --c: var(--pending);
 }
 .status {
   display: inline-block;
+  white-space: nowrap;
   padding: 0 var(--space);
   border: 1px solid var(--c);
   border-radius: 999px;

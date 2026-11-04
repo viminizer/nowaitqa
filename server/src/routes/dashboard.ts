@@ -7,6 +7,7 @@ import {
   CreateRunBody,
   DbIdParam,
   DeviceBody,
+  type DeviceConnectivity,
   DeviceEnabledBody,
   DeviceList,
   RunAgainBody,
@@ -17,6 +18,7 @@ import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyReply } from 'fastify'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
+import { config } from '../config.ts'
 import { db } from '../db/index.ts'
 import { devices, queue, results } from '../db/schema.ts'
 import { BadDeviceError, registerDevice } from '../devices.ts'
@@ -75,6 +77,10 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       db
         .select({
           ...getTableColumns(devices),
+          connectivity: sql<DeviceConnectivity>`case
+            when ${devices.lastSeenAt} is null then 'waiting'
+            when ${devices.lastSeenAt} > now() - ${config.DEVICE_OFFLINE_SECONDS} * interval '1 second'
+              then 'online' else 'offline' end`,
           pausedUntil: sql<Date | null>`case when ${devices.pausedUntil} > now()
             then ${devices.pausedUntil} end`.mapWith(devices.pausedUntil),
           pauseReason: sql<string | null>`case when ${devices.pausedUntil} > now()

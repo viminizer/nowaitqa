@@ -1,10 +1,17 @@
 // One worker per phone: take the next scenario, run it, report it, repeat.
 
 import { setTimeout as sleep } from 'node:timers/promises'
-import { type Device, type Lease, messageOf } from '@nowait/shared'
+import {
+  DEVICE_CONTACT_INTERVAL_MS,
+  type Device,
+  every,
+  type Lease,
+  messageOf,
+} from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { z } from 'zod'
 import {
+  contactDevice,
   DeviceGoneError,
   DevicePausedError,
   heartbeat,
@@ -25,82 +32,92 @@ const ERROR_PAUSE_MS = 60_000
 
 export async function runWorker(device: Device) {
   log(device.name, 'worker started')
+  const stopContact = every(
+    DEVICE_CONTACT_INTERVAL_MS,
+    'runner contact',
+    (signal) => contactDevice(device, signal),
+    { error: (err, message) => log(device.name, message, err) },
+  )
   let session: Session | null = null
 
-  while (true) {
-    let current: Lease | null = null
-    let leaseGone = false
-    let stopHeartbeat = () => {}
-    try {
-      current = await lease(device.name, commits(), session?.runId)
-      if (!current) continue
-      // From the moment we hold the lease: a first app install can take minutes.
-      // If the lease is gone, ending the Appium session stops the scenario at its next command.
-      stopHeartbeat = keepLeaseAlive(device, current, async () => {
-        leaseGone = true
-        await closeSession(device, session)
-      })
+  try {
+    while (true) {
+      let current: Lease | null = null
+      let leaseGone = false
+      let stopHeartbeat = () => {}
+      try {
+        current = await lease(device.name, commits(), session?.runId)
+        if (!current) continue
+        // From the moment we hold the lease: a first app install can take minutes.
+        // If the lease is gone, ending the Appium session stops the scenario at its next command.
+        stopHeartbeat = keepLeaseAlive(device, current, async () => {
+          leaseGone = true
+          await closeSession(device, session)
+        })
 
-      // Reuse only within the same run and health epoch. Fresh mode always opens a new session.
-      if (
-        config.SESSION_MODE === 'reuse' &&
-        session?.runId === current.runId &&
-        session.resetAt === current.sessionResetAt.getTime()
-      ) {
-        await resetApp(device, session)
-      } else {
+        // Reuse only within the same run and health epoch. Fresh mode always opens a new session.
+        if (
+          config.SESSION_MODE === 'reuse' &&
+          session?.runId === current.runId &&
+          session.resetAt === current.sessionResetAt.getTime()
+        ) {
+          await resetApp(device, session)
+        } else {
+          await closeSession(device, session)
+          session = null
+          session = await openSession(device, current)
+        }
+
+        // Cancellation may arrive while Xcode is still creating the session. The heartbeat had
+        // no session to close yet; release it as soon as creation finishes, without running code.
+        if (leaseGone) {
+          await closeSession(device, session)
+          session = null
+          continue
+        }
+
+        const result = await runScenario(session.driver, device, current)
+        stopHeartbeat()
+        const saved = await sendResult(result)
+        if (!saved) {
+          const why = 'the lease was gone, or an earlier try already saved it'
+          log(device.name, `result for ${current.scenarioId} not recorded by this send: ${why}`)
+        }
+
+        // Fresh mode also releases passing attempts. A failure always starts clean next time.
+        if (config.SESSION_MODE === 'fresh' || result.status === 'failed') {
+          await closeSession(device, session)
+          session = null
+        }
+      } catch (err) {
+        stopHeartbeat()
         await closeSession(device, session)
         session = null
-        session = await openSession(device, current)
+        if (err instanceof DevicePausedError) {
+          log(device.name, err.message)
+          // Session cleanup can be slow; its time already counts toward the server's cooldown.
+          await sleep(Math.max(0, err.until - Date.now()))
+          continue
+        }
+        if (err instanceof DeviceGoneError) {
+          log(device.name, 'worker stopped', err.message)
+          return
+        }
+        // A result that could not be sent is not replaced by a "runner error" result: one of its
+        // tries may still be saved by the server, and the error report would win over it. Its lease
+        // runs out instead: "lease expired", and the scenario runs again if it has attempts left
+        // (on its last attempt it stays failed). The phone itself is fine, so no pause.
+        if (err instanceof ResultNotSentError) {
+          log(device.name, `${err.message}; unless a try got through, it counts as "lease expired"`)
+          continue
+        }
+        log(device.name, 'worker error', err)
+        if (current) await reportRunnerError(device, current, err)
+        await sleep(ERROR_PAUSE_MS)
       }
-
-      // Cancellation may arrive while Xcode is still creating the session. The heartbeat had
-      // no session to close yet; release it as soon as creation finishes, without running code.
-      if (leaseGone) {
-        await closeSession(device, session)
-        session = null
-        continue
-      }
-
-      const result = await runScenario(session.driver, device, current)
-      stopHeartbeat()
-      const saved = await sendResult(result)
-      if (!saved) {
-        const why = 'the lease was gone, or an earlier try already saved it'
-        log(device.name, `result for ${current.scenarioId} not recorded by this send: ${why}`)
-      }
-
-      // Fresh mode also releases passing attempts. A failure always starts clean next time.
-      if (config.SESSION_MODE === 'fresh' || result.status === 'failed') {
-        await closeSession(device, session)
-        session = null
-      }
-    } catch (err) {
-      stopHeartbeat()
-      await closeSession(device, session)
-      session = null
-      if (err instanceof DevicePausedError) {
-        log(device.name, err.message)
-        // Session cleanup can be slow; its time already counts toward the server's cooldown.
-        await sleep(Math.max(0, err.until - Date.now()))
-        continue
-      }
-      if (err instanceof DeviceGoneError) {
-        log(device.name, 'worker stopped', err.message)
-        return
-      }
-      // A result that could not be sent is not replaced by a "runner error" result: one of its
-      // tries may still be saved by the server, and the error report would win over it. Its lease
-      // runs out instead: "lease expired", and the scenario runs again if it has attempts left
-      // (on its last attempt it stays failed). The phone itself is fine, so no pause.
-      if (err instanceof ResultNotSentError) {
-        log(device.name, `${err.message}; unless a try got through, it counts as "lease expired"`)
-        continue
-      }
-      log(device.name, 'worker error', err)
-      if (current) await reportRunnerError(device, current, err)
-      await sleep(ERROR_PAUSE_MS)
     }
+  } finally {
+    stopContact()
   }
 }
 

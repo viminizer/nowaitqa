@@ -16,6 +16,9 @@ const Env = z.object({
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
   MAX_ATTEMPTS: z.coerce.number().int().positive().default(2), // 1 run + 1 retry
+  // Greater than the worker's 30s contact interval plus its 10s request timeout (R34).
+  DEVICE_OFFLINE_SECONDS: z.coerce.number().int().min(60).max(86_400).default(120),
+  // Suspected unhealthy phones take no new work for this long, then resume automatically.
   DEVICE_PAUSE_SECONDS: z.coerce.number().int().positive().max(86_400).default(300),
   ARTIFACT_DIR: z.string().default('artifacts'), // where artifacts go when S3_BUCKET is not set
   ARTIFACT_DAYS: z.coerce.number().int().positive().default(30),

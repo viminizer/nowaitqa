@@ -2,12 +2,11 @@ import { timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import fastifyStatic from '@fastify/static'
-import { ACTION_HEADER } from '@nowait/shared'
+import { ACTION_HEADER, every } from '@nowait/shared'
 import Fastify from 'fastify'
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
-import { every } from './jobs.ts'
 import { startNotifications } from './notify/index.ts'
 import { expireLeases, expireRuns, pauseUnhealthyDevices } from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
@@ -91,7 +90,7 @@ app.log.info(`artifacts are kept in: ${store.name}`)
 // First, so a run that the jobs below finish is news to a platform turned on just now.
 await startNotifications(app.log)
 
-// Background jobs (jobs.ts). The expiry jobs wait at first on their own, to give runners time to
+// Background jobs (shared/src/jobs.ts). The expiry jobs wait at first on their own, to give runners time to
 // come back after a restart (see queue.ts).
 every(15_000, 'expireLeases', expireLeases, app.log)
 every(60_000, 'expireRuns', expireRuns, app.log)

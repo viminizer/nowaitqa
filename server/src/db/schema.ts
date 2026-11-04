@@ -20,6 +20,7 @@ export const devices = pgTable('devices', {
   systemPort: integer().notNull(),
   host: text().notNull(),
   enabled: boolean().notNull().default(true),
+  lastSeenAt: timestamp({ withTimezone: true }),
   pausedUntil: timestamp({ withTimezone: true }),
   pauseReason: text(),
   // Attempts leased before this time cannot count toward a new pause after recovery.
