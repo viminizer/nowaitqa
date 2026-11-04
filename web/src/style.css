@@ -287,23 +287,23 @@ tbody tr:last-child td {
   cursor: wait;
 }
 .action button:focus-visible,
-.start-run input:focus-visible,
-.start-run select:focus-visible {
+.action-form input:focus-visible,
+.action-form select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.start-run {
+.action-form {
   padding: calc(var(--space) * 2);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow-wrap: anywhere;
 }
-.start-run h2 {
+.action-form h2 {
   margin-top: 0;
 }
-.start-run fieldset {
+.action-form fieldset {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) auto;
   align-items: end;
@@ -313,14 +313,14 @@ tbody tr:last-child td {
   padding: 0;
   border: 0;
 }
-.start-run label {
+.action-form label {
   display: flex;
   flex-direction: column;
   gap: calc(var(--space) / 2);
   min-width: 0;
 }
-.start-run input,
-.start-run select {
+.action-form input,
+.action-form select {
   width: 100%;
   min-width: 0;
   font: inherit;
@@ -330,15 +330,19 @@ tbody tr:last-child td {
   border-radius: var(--radius);
   padding: calc(var(--space) / 2) var(--space);
 }
-.start-run .action {
+.action-form .action {
   margin-left: 0;
 }
-.start-run .error {
+.action-form .error {
   display: block;
   margin-top: var(--space);
 }
+.device-form fieldset {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
 @media (max-width: 600px) {
-  .start-run fieldset {
+  .action-form fieldset {
     grid-template-columns: minmax(0, 1fr);
   }
 }

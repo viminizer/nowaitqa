@@ -256,6 +256,10 @@ Build it before you start the server: the server looks for it at startup. It the
 (any) and `DASHBOARD_PASSWORD`. It refreshes every 5 seconds (a finished run's page stops).
 
 It can also:
+- **Add a device.** On Phones, enter its name, platform, UDID, Appium URL, machine (the runner's
+  `HOST`) and system/WDA port. Start Appium and the runner on that machine; the runner picks up
+  the registration within a minute. The form adds only: an existing name or UDID is an error,
+  and its settings stay unchanged. Use `PUT /devices` to update an existing registration.
 - **Start a new run.** On Runs, choose Android or iOS Simulator and enter the app build URL or
   Appium-host path. It uses the latest scenarios reported by a runner, shared queue assignment
   and one pass, then opens the new run's progress page. Connection errors appear in the form,

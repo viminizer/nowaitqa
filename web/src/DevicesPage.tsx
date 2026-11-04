@@ -1,18 +1,137 @@
 import { DeviceList } from '@nowait/shared'
-import { useApi } from './api.ts'
-import { Action, Loaded, Status, time } from './ui.tsx'
+import type { FormEvent } from 'react'
+import { useAction, useApi } from './api.ts'
+import { Action, ActionError, Loaded, Status, time } from './ui.tsx'
+
+function AddDevice() {
+  const action = useAction()
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (action.isPending) return
+    const form = event.currentTarget
+    const fields = new FormData(form)
+    const value = (name: string) => String(fields.get(name) ?? '').trim()
+    action.mutate(
+      {
+        path: '/devices',
+        body: {
+          name: value('name'),
+          platform: value('platform'),
+          udid: value('udid'),
+          appiumUrl: value('appiumUrl'),
+          host: value('host'),
+          systemPort: Number(value('systemPort')),
+        },
+      },
+      { onSuccess: () => form.reset() },
+    )
+  }
+  return (
+    <form
+      className="action-form device-form"
+      onSubmit={submit}
+      aria-labelledby="add-device-title"
+      aria-describedby="add-device-help"
+      aria-busy={action.isPending}
+    >
+      <h2 id="add-device-title">Add device</h2>
+      <p className="muted" id="add-device-help">
+        Register an Android device or iOS Simulator. Start Appium and the runner on its machine; the
+        runner picks up new devices within a minute. Existing registrations stay unchanged.
+      </p>
+      <fieldset disabled={action.isPending}>
+        <label htmlFor="device-name">
+          Name
+          <input id="device-name" name="name" required pattern=".*\S.*" autoComplete="off" />
+        </label>
+        <label htmlFor="device-platform">
+          Platform
+          <select id="device-platform" name="platform" defaultValue="android">
+            <option value="android">Android</option>
+            <option value="ios">iOS Simulator</option>
+          </select>
+        </label>
+        <label htmlFor="device-udid">
+          UDID
+          <input
+            id="device-udid"
+            name="udid"
+            required
+            pattern=".*\S.*"
+            autoComplete="off"
+            aria-describedby="device-udid-help"
+          />
+          <span className="muted" id="device-udid-help">
+            Android serial from adb devices, or Simulator UUID from xcrun simctl list devices.
+          </span>
+        </label>
+        <label htmlFor="device-host">
+          Machine
+          <input
+            id="device-host"
+            name="host"
+            required
+            pattern=".*\S.*"
+            autoComplete="off"
+            aria-describedby="device-host-help"
+          />
+          <span className="muted" id="device-host-help">
+            Must match the runner's HOST setting.
+          </span>
+        </label>
+        <label htmlFor="device-appium">
+          Appium URL
+          <input
+            id="device-appium"
+            name="appiumUrl"
+            type="url"
+            required
+            placeholder="http://127.0.0.1:4723"
+            aria-describedby="device-appium-help"
+          />
+          <span className="muted" id="device-appium-help">
+            Reachable from the runner's machine.
+          </span>
+        </label>
+        <label htmlFor="device-port">
+          System / WDA port
+          <input
+            id="device-port"
+            name="systemPort"
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
+            required
+            aria-describedby="device-port-help"
+          />
+          <span className="muted" id="device-port-help">
+            Use separate ports per device. iOS also reserves the next port for MJPEG.
+          </span>
+        </label>
+        <span className="action">
+          <button type="submit">{action.isPending ? 'Adding…' : 'Add device'}</button>
+        </span>
+      </fieldset>
+      <ActionError error={action.error} />
+      {action.isSuccess && (
+        <p role="status">Device added. The runner picks it up within a minute.</p>
+      )}
+    </form>
+  )
+}
 
 export function DevicesPage() {
   const state = useApi('/devices', DeviceList)
   return (
     <>
       <h1>Phones</h1>
+      <AddDevice />
+      <h2>Registered devices</h2>
       <Loaded state={state}>
         {({ devices }) =>
           devices.length === 0 ? (
-            <p className="muted">
-              No phones yet. Add one with <code>PUT /devices</code>.
-            </p>
+            <p className="muted">No devices yet. Add one above.</p>
           ) : (
             <div className="scroll">
               <table>
