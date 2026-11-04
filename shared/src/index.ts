@@ -96,10 +96,17 @@ export const Lease = z.object({
   attempt: z.number().int(),
   account: z.string().nullable(), // test account username; the password comes from runner env
   leaseSeconds: z.number().int(),
+  sessionResetAt: z.coerce.date(), // new session required when this marker changes after a health pause
 })
 export type Lease = z.infer<typeof Lease>
 
 export const HeartbeatBody = z.object({ queueId: DbId, device: z.string().min(1) })
+
+// A paused worker closes its idle Appium session before waiting, then leases again.
+export const DevicePause = z.object({
+  error: z.literal('device is paused'),
+  retryAfterSeconds: z.number().int().positive().max(86_400),
+})
 
 export const ResultBody = z.object({
   queueId: DbId,
@@ -229,6 +236,8 @@ export const DeviceList = z.object({
     Device.safeExtend({
       busy: z.object({ runId: z.number().int(), scenarioId: z.string() }).nullable(),
       lastWorkAt: z.coerce.date().nullable(), // when it last finished an attempt
+      pausedUntil: z.coerce.date().nullable(), // null when the cooldown is over, by the server's clock
+      pauseReason: z.string().nullable(),
     }),
   ),
 })

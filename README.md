@@ -77,6 +77,27 @@ unless you pass `--address 127.0.0.1`).
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute.
 
+### Device health
+
+The server checks device health every 15 seconds. It pauses a phone when **three different
+scenarios fail on it and later attempts of those same items pass on other phones in the same
+run**. A passing result on the suspect phone resets its failure streak. Repeating one scenario
+does not count as three different failures, and failures from separate runs are not combined.
+This is evidence of suspected device trouble; a device-specific app bug can look the same.
+
+During a pause, already leased work finishes and the phone gets no new work. Other phones can
+take its pending fixed-split items. Its next lease request returns **423** with `retryAfterSeconds`
+and a `Retry-After` header. The runner closes its Appium session before waiting, then resumes
+with a fresh session and failure streak. Old failures and late retries from before recovery
+cannot immediately pause it again. New evidence can cause another pause if the problem persists.
+Each lease also carries a session-reset marker: work that outlasts the cooldown still gets a
+fresh Appium session on its next lease, even if it never received a paused response.
+
+The cooldown is `DEVICE_PAUSE_SECONDS` (default **300**, five minutes). It must be shorter than
+`STUCK_RUN_MINUTES`, so a paused phone can resume before a run is considered stuck. The pause
+and recovery boundary survive server/runner restarts. The Phones page shows the reason and
+resume time; a phone turned off manually stays off after the cooldown ends.
+
 ### iOS Simulator
 
 iOS runs use XCUITest on a Mac with Xcode and an installed iOS Simulator runtime. Real iPhones

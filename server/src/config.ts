@@ -16,6 +16,7 @@ const Env = z.object({
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
   MAX_ATTEMPTS: z.coerce.number().int().positive().default(2), // 1 run + 1 retry
+  DEVICE_PAUSE_SECONDS: z.coerce.number().int().positive().max(86_400).default(300),
   ARTIFACT_DIR: z.string().default('artifacts'), // where artifacts go when S3_BUCKET is not set
   ARTIFACT_DAYS: z.coerce.number().int().positive().default(30),
   // S3 for artifacts: on when S3_BUCKET is set. S3_ENDPOINT for RustFS or MinIO (like
@@ -39,10 +40,15 @@ const Env = z.object({
   TELEGRAM_API_URL: z.url().default('https://api.telegram.org'), // or a self-hosted Bot API
 })
 
-const parsed = Env.refine((env) => !env.SLACK_BOT_TOKEN === !env.SLACK_CHANNEL, {
-  message: 'set both SLACK_BOT_TOKEN and SLACK_CHANNEL, or neither',
-  path: ['SLACK_CHANNEL'],
+const parsed = Env.refine((env) => env.DEVICE_PAUSE_SECONDS < env.STUCK_RUN_MINUTES * 60, {
+  message:
+    'DEVICE_PAUSE_SECONDS must be shorter than STUCK_RUN_MINUTES, so paused phones can recover',
+  path: ['DEVICE_PAUSE_SECONDS'],
 })
+  .refine((env) => !env.SLACK_BOT_TOKEN === !env.SLACK_CHANNEL, {
+    message: 'set both SLACK_BOT_TOKEN and SLACK_CHANNEL, or neither',
+    path: ['SLACK_CHANNEL'],
+  })
   .refine((env) => !env.TELEGRAM_BOT_TOKEN === !env.TELEGRAM_CHAT_ID, {
     message: 'set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, or neither',
     path: ['TELEGRAM_CHAT_ID'],

@@ -9,7 +9,7 @@ import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
 import { every } from './jobs.ts'
 import { startNotifications } from './notify/index.ts'
-import { expireLeases, expireRuns } from './queue.ts'
+import { expireLeases, expireRuns, pauseUnhealthyDevices } from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
 import { runRoutes } from './routes/runs.ts'
@@ -95,6 +95,7 @@ await startNotifications(app.log)
 // come back after a restart (see queue.ts).
 every(15_000, 'expireLeases', expireLeases, app.log)
 every(60_000, 'expireRuns', expireRuns, app.log)
+every(15_000, 'pauseUnhealthyDevices', pauseUnhealthyDevices, app.log)
 every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts, app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
