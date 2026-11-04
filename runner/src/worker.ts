@@ -13,6 +13,7 @@ import {
   sendResult,
 } from './api.ts'
 import { commits } from './catalog.ts'
+import { config } from './config.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
 
@@ -40,8 +41,9 @@ export async function runWorker(device: Device) {
         await closeSession(device, session)
       })
 
-      // One session per phone for the whole run. A new run brings a new app build.
+      // Reuse only within the same run and health epoch. Fresh mode always opens a new session.
       if (
+        config.SESSION_MODE === 'reuse' &&
         session?.runId === current.runId &&
         session.resetAt === current.sessionResetAt.getTime()
       ) {
@@ -68,8 +70,8 @@ export async function runWorker(device: Device) {
         log(device.name, `result for ${current.scenarioId} not recorded by this send: ${why}`)
       }
 
-      // After a failure the app may be in a strange state: start clean next time.
-      if (result.status === 'failed') {
+      // Fresh mode also releases passing attempts. A failure always starts clean next time.
+      if (config.SESSION_MODE === 'fresh' || result.status === 'failed') {
         await closeSession(device, session)
         session = null
       }
@@ -169,7 +171,7 @@ async function openSession(device: Device, lease: Lease): Promise<Session> {
       : await driver.getCurrentPackage()
     const session = { driver, runId: lease.runId, appId, resetAt: lease.sessionResetAt.getTime() }
     // Also clear an app left on the device by a previous run or failed attempt.
-    if (ios) await resetApp(device, session)
+    if (ios || config.SESSION_MODE === 'fresh') await resetApp(device, session)
     return session
   } catch (err) {
     await driver
