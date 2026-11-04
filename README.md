@@ -49,6 +49,10 @@ back to the queue. A run is stuck when no phone of its platform has taken or fin
 After a restart, the server waits that long before calling a run stuck, and one lease time before
 expiring a lease, so phones have time to come back.
 
+When the server detects a disconnect while a runner is waiting for or acquiring work, it cancels
+the poll and returns any undelivered lease to the queue without using an attempt. A lease already
+sent still expires normally if the runner stops its heartbeats.
+
 ## Runner
 
 Runs on the machine the phones are plugged into, next to Appium. One worker per phone: each takes

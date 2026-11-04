@@ -1,6 +1,6 @@
 {
   "name": "nowait-qa",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",

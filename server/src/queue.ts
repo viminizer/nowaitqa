@@ -49,15 +49,18 @@ function notifyWork() {
   for (const wake of woken) wake()
 }
 
-export function waitForWork(ms: number) {
+export function waitForWork(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     const wake = () => {
       clearTimeout(timer)
+      signal.removeEventListener('abort', wake)
       waiters = waiters.filter((w) => w !== wake)
       resolve()
     }
     const timer = setTimeout(wake, ms)
     waiters.push(wake)
+    signal.addEventListener('abort', wake, { once: true })
+    if (signal.aborted) wake()
   })
 }
 
@@ -394,8 +397,10 @@ export async function leaseNext(
   deviceName: string,
   commits: string[],
   currentRunId = 0,
+  signal: AbortSignal,
 ): Promise<Lease | null> {
-  return db.transaction(async (tx) => {
+  signal.throwIfAborted()
+  const lease = await db.transaction(async (tx) => {
     // SHARE serializes with a health pause without blocking result inserts' FK KEY SHARE locks.
     // A paused phone gets a retry delay, so its worker can release its idle Appium session.
     const [found] = await tx
@@ -408,6 +413,7 @@ export async function leaseNext(
       .where(and(eq(devices.name, deviceName), eq(devices.enabled, true)))
       .limit(1)
       .for('share')
+    signal.throwIfAborted()
     if (!found) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
     if (found.pauseSeconds > 0) throw new PausedDeviceError(found.pauseSeconds)
     const { device } = found
@@ -458,6 +464,8 @@ export async function leaseNext(
       .where(eq(queue.id, row.id))
       .returning()
     if (!leased) throw new Error('lease update returned nothing')
+    // A disconnect during acquisition rolls back both the queue row and its account claim.
+    signal.throwIfAborted()
 
     return {
       queueId: leased.id,
@@ -471,6 +479,21 @@ export async function leaseNext(
       sessionResetAt: device.healthSince,
     }
   })
+  // COMMIT is asynchronous too: a disconnect during it needs compensation after it finishes.
+  // This row has not been delivered. Expiry or cancellation may already have finished it.
+  if (signal.aborted && lease) {
+    const returned = await db
+      .update(queue)
+      .set({ status: 'pending', device: null, leasedAt: null, leaseUntil: null })
+      .where(
+        and(eq(queue.id, lease.queueId), eq(queue.device, deviceName), eq(queue.status, 'leased')),
+      )
+      .returning({ id: queue.id })
+    // Accounts pointing to pending rows are free (takeAccount), and another poll can take work.
+    if (returned.length > 0) notifyWork()
+  }
+  signal.throwIfAborted()
+  return lease
 }
 
 // Returns a free account's username, null when the pool is empty (the app needs no login),
