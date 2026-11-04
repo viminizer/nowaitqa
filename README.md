@@ -32,16 +32,17 @@ There are two tokens:
 - `RUNNER_TOKEN`: the runner. It can call every route.
 - `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
 
-| Route                | Who calls it | What it does                                                       |
-| -------------------- | ------------ | ------------------------------------------------------------------ |
-| `POST /runs`         | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
-| `GET /runs/:id`      | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
-| `PUT /devices`       | you          | Add or change a phone (runner token)                               |
-| `GET /devices?host=` | runner       | The phones plugged into one machine                                |
-| `PUT /catalog`       | runner       | Send its scenario list and their git commit (at startup)           |
-| `POST /lease`        | runner       | Take the next scenario. Waits up to 30s if there is none           |
-| `POST /heartbeat`    | runner       | Keep a lease alive while a scenario runs                           |
-| `POST /results`      | runner       | Report pass or fail, with a screenshot and a log                   |
+| Route                   | Who calls it | What it does                                                       |
+| ----------------------- | ------------ | ------------------------------------------------------------------ |
+| `POST /runs`            | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
+| `GET /runs/:id`         | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
+| `PUT /devices`          | you          | Add or change a phone (runner token)                               |
+| `GET /devices?host=`    | runner       | The phones plugged into one machine                                |
+| `POST /devices/contact` | runner       | Report that one device worker is still connected                   |
+| `PUT /catalog`          | runner       | Send its scenario list and their git commit (at startup)           |
+| `POST /lease`           | runner       | Take the next scenario. Waits up to 30s if there is none           |
+| `POST /heartbeat`       | runner       | Keep a lease alive while a scenario runs                           |
+| `POST /results`         | runner       | Report pass or fail, with a screenshot and a log                   |
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
 back to the queue. A run is stuck when no phone of its platform has taken or finished any work for
@@ -272,6 +273,27 @@ It can also:
   This starts a new run with the same app build, commit and split; the old run keeps its results.
 
 Each action is written to the server log.
+
+Phones shows runner connectivity separately from device activity: **waiting for runner** until
+that device's worker first reports contact, **online** while contact is recent, then **offline**.
+Last seen is the server's time of the most recent contact. Offline or uncontacted devices do not
+show as idle. Enabled/disabled, health pauses and active leases remain separate: a runner can be
+online while its device is paused or its Appium setup is failing.
+
+Workers report contact immediately, then 30 seconds after each contact request finishes, including
+while idle, installing/running an app or waiting for a health cooldown. Requests time out after
+10 seconds and do not overlap; contact failures do not change test results. The server's
+`DEVICE_OFFLINE_SECONDS` defaults to 120 (minimum 60, longer than the 30s interval plus 10s timeout).
+The dashboard refreshes every 5 seconds; stale data during a failed refresh keeps its error notice.
+This reports runner-to-server connectivity, not Appium or hardware readiness, and does not change
+queue assignment or lease expiry.
+
+Existing registrations start as waiting after migration. Restart runners with this version to
+report contact; older runners can still run tests but do not send the new contact requests.
+Registration and device-list reads do not count as contact. Contact persists across server
+restarts and becomes offline if it ages past the threshold; a fresh report restores online.
+Changing a registration's machine, UDID or platform clears its last-seen time, and contact from
+its old identity cannot mark the replacement online.
 
 To work on it, run `pnpm --filter @nowait/web dev` next to the server: Vite serves it at
 `http://localhost:5173/dashboard/` and sends the API calls to the server on port 3000.

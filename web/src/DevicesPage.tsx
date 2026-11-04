@@ -128,6 +128,9 @@ export function DevicesPage() {
       <h1>Phones</h1>
       <AddDevice />
       <h2>Registered devices</h2>
+      <p className="muted">
+        Runner status shows recent contact, not whether Appium or the device is ready.
+      </p>
       <Loaded state={state}>
         {({ devices }) =>
           devices.length === 0 ? (
@@ -138,6 +141,8 @@ export function DevicesPage() {
                 <thead>
                   <tr>
                     <th>Phone</th>
+                    <th>Runner</th>
+                    <th>Last seen</th>
                     <th>Now</th>
                     <th>Last work</th>
                     <th>Platform</th>
@@ -152,6 +157,10 @@ export function DevicesPage() {
                   {devices.map((d) => (
                     <tr key={d.name}>
                       <td>{d.name}</td>
+                      <td>
+                        <Status status={d.connectivity} />
+                      </td>
+                      <td>{time(d.lastSeenAt)}</td>
                       <td className="device-state">
                         {!d.enabled ? (
                           <Status status="disabled" />
@@ -162,7 +171,11 @@ export function DevicesPage() {
                             <p className="muted">Resumes {time(d.pausedUntil)}</p>
                           </>
                         ) : !d.busy ? (
-                          <Status status="idle" />
+                          d.connectivity === 'online' ? (
+                            <Status status="idle" />
+                          ) : (
+                            <span className="muted">-</span>
+                          )
                         ) : null}
                         {d.enabled && d.busy && (
                           <>

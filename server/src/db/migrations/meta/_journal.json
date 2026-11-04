@@ -78,6 +78,13 @@
       "when": 1793790623523,
       "tag": "0010_device_health",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793814616892,
+      "tag": "0011_device_contact",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import {
   type Catalog,
   type CreateRunBody,
+  DEVICE_CONTACT_TIMEOUT_MS,
   Device,
   DevicePause,
   Lease,
@@ -32,12 +33,14 @@ async function call(
   expected: number[],
   body?: unknown,
   timeoutMs?: number,
+  signal?: AbortSignal,
 ) {
+  const timeout = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined
   const res = await fetch(new URL(path, config.SERVER_URL), {
     method,
     headers: { authorization: `Bearer ${config.RUNNER_TOKEN}`, 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+    signal: signal && timeout ? AbortSignal.any([signal, timeout]) : (signal ?? timeout),
   })
   if (!expected.includes(res.status)) {
     throw new HttpError(`${method} ${path} -> ${res.status} ${await res.text()}`, res.status)
@@ -52,6 +55,18 @@ export async function sendCatalog(catalog: Catalog) {
 export async function getDevices() {
   const res = await call('GET', `/devices?host=${encodeURIComponent(config.HOST)}`, [200])
   return z.array(Device).parse(await res.json())
+}
+
+// A separate request: keep reporting contact during long polls, Appium startup and cooldowns.
+export async function contactDevice(device: Device, signal: AbortSignal) {
+  await call(
+    'POST',
+    '/devices/contact',
+    [204],
+    { name: device.name, host: config.HOST, udid: device.udid, platform: device.platform },
+    DEVICE_CONTACT_TIMEOUT_MS,
+    signal,
+  )
 }
 
 export async function createRun(body: z.input<typeof CreateRunBody>) {

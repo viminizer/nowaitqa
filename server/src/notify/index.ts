@@ -1,13 +1,12 @@
 // Sends every finished run to every chat platform that is set up. Driven by the notifications
 // table, so a platform that is down, or a server restart, does not lose a run: it is sent later,
 // for up to RETRY_HOURS. Runs that finished before a platform was first turned on are not sent.
-import { countStatuses } from '@nowait/shared'
+import { countStatuses, every } from '@nowait/shared'
 import { and, desc, eq, gte, isNull, ne, sql } from 'drizzle-orm'
 import type { FastifyBaseLogger } from 'fastify'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
 import { notifications, notifiersOn, queue, results, runs } from '../db/schema.ts'
-import { every } from '../jobs.ts'
 import { getRun } from '../queue.ts'
 import { type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { slackNotifier } from './slack.ts'
@@ -153,7 +152,7 @@ async function sendDue(notifier: Notifier, since: Date, log: FastifyBaseLogger) 
   }
 }
 
-// Starts one job per platform that is set up (jobs.ts), so a slow or rate-limited platform never
+// Starts one job per platform that is set up (shared/src/jobs.ts), so a slow or rate-limited platform never
 // holds back another, and a run is never sent twice (ticks don't overlap). It first records when
 // each one was turned on: now, not at the first tick, so a run that ends in between is news.
 export async function startNotifications(log: FastifyBaseLogger) {

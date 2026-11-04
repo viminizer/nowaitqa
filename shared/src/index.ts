@@ -1,6 +1,12 @@
 // API contract between the server, the runner and Jenkins. Both sides import these schemas (R5).
 import { z } from 'zod'
 
+export { every } from './jobs.ts'
+
+// Worker contact is independent of leases, including idle work and health pauses.
+export const DEVICE_CONTACT_INTERVAL_MS = 30_000
+export const DEVICE_CONTACT_TIMEOUT_MS = 10_000
+
 // A row id from the request. Postgres ids and ints are 4 bytes: a bigger number is a 400 here, not
 // a 500 from the database (R47).
 const INT4_MAX = 2_147_483_647
@@ -49,6 +55,16 @@ export const DeviceBody = DeviceFields.extend({ enabled: z.boolean().optional() 
   checkSimulator,
 )
 export type DeviceBody = z.infer<typeof DeviceBody>
+
+export const DeviceContactBody = DeviceFields.pick({
+  name: true,
+  host: true,
+  udid: true,
+  platform: true,
+})
+export type DeviceContactBody = z.infer<typeof DeviceContactBody>
+export const DeviceConnectivity = z.enum(['waiting', 'online', 'offline'])
+export type DeviceConnectivity = z.infer<typeof DeviceConnectivity>
 
 // A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
@@ -235,6 +251,8 @@ export type AttemptPage = z.infer<typeof AttemptPage>
 export const DeviceList = z.object({
   devices: z.array(
     Device.safeExtend({
+      connectivity: DeviceConnectivity,
+      lastSeenAt: z.coerce.date().nullable(),
       busy: z.object({ runId: z.number().int(), scenarioId: z.string() }).nullable(),
       lastWorkAt: z.coerce.date().nullable(), // when it last finished an attempt
       pausedUntil: z.coerce.date().nullable(), // null when the cooldown is over, by the server's clock
