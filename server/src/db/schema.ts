@@ -20,6 +20,10 @@ export const devices = pgTable('devices', {
   systemPort: integer().notNull(),
   host: text().notNull(),
   enabled: boolean().notNull().default(true),
+  pausedUntil: timestamp({ withTimezone: true }),
+  pauseReason: text(),
+  // Attempts leased before this time cannot count toward a new pause after recovery.
+  healthSince: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
 
 export const runs = pgTable(
@@ -70,6 +74,7 @@ export const queue = pgTable(
   (t) => [
     index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),
     index('queue_run_idx').on(t.runId, t.id), // a run's attempts (dashboard, summaries)
+    index('queue_slot_idx').on(t.runId, t.slot, t.attempt), // health: a failed item's later attempts
     index('queue_leased_idx').on(t.device).where(sql`status = 'leased'`), // dashboard: busy phones
   ],
 )
@@ -98,6 +103,7 @@ export const results = pgTable(
   },
   (t) => [
     index('results_device_idx').on(t.device, t.createdAt), // dashboard: a phone's last work
+    index('results_device_passed_idx').on(t.device, t.createdAt).where(sql`status = 'passed'`), // health: the success that resets a phone's failure streak
     index('results_run_idx').on(t.runId), // a run's results (artifact cleanup)
     // expectedTimes: a scenario's latest passing attempts
     index('results_passed_idx').on(t.platform, t.scenarioId, t.id).where(sql`status = 'passed'`),

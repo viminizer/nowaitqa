@@ -71,6 +71,13 @@
       "when": 1793784949688,
       "tag": "0009_ios_history",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793790623523,
+      "tag": "0010_device_health",
+      "breakpoints": true
     }
   ]
 }

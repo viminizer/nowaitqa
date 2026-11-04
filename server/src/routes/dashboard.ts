@@ -71,6 +71,10 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       db
         .select({
           ...getTableColumns(devices),
+          pausedUntil: sql<Date | null>`case when ${devices.pausedUntil} > now()
+            then ${devices.pausedUntil} end`.mapWith(devices.pausedUntil),
+          pauseReason: sql<string | null>`case when ${devices.pausedUntil} > now()
+            then ${devices.pauseReason} end`,
           lastWorkAt: sql<Date | null>`(
             select max(${results.createdAt}) from ${results} where ${results.device} = ${devices.name}
           )`.mapWith(results.createdAt),

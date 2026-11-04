@@ -131,7 +131,13 @@ async function insertRun(newRun: NewRun, items: string[]) {
           await db
             .select({ name: devices.name })
             .from(devices)
-            .where(and(eq(devices.platform, newRun.platform), eq(devices.enabled, true)))
+            .where(
+              and(
+                eq(devices.platform, newRun.platform),
+                eq(devices.enabled, true),
+                sql`coalesce(${devices.pausedUntil} <= now(), true)`,
+              ),
+            )
             .orderBy(asc(devices.name))
         ).map((d) => d.name)
       : []
@@ -378,6 +384,11 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
 // --- leasing ---------------------------------------------------------------------------------
 
 export class UnknownDeviceError extends Error {}
+export class PausedDeviceError extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super('device is paused')
+  }
+}
 
 export async function leaseNext(
   deviceName: string,
@@ -385,10 +396,21 @@ export async function leaseNext(
   currentRunId = 0,
 ): Promise<Lease | null> {
   return db.transaction(async (tx) => {
-    const device = await tx.query.devices.findFirst({
-      where: and(eq(devices.name, deviceName), eq(devices.enabled, true)),
-    })
-    if (!device) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
+    // SHARE serializes with a health pause without blocking result inserts' FK KEY SHARE locks.
+    // A paused phone gets a retry delay, so its worker can release its idle Appium session.
+    const [found] = await tx
+      .select({
+        device: devices,
+        pauseSeconds: sql<number>`greatest(0, ceil(extract(epoch from
+          (${devices.pausedUntil} - now()))))::int`,
+      })
+      .from(devices)
+      .where(and(eq(devices.name, deviceName), eq(devices.enabled, true)))
+      .limit(1)
+      .for('share')
+    if (!found) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
+    if (found.pauseSeconds > 0) throw new PausedDeviceError(found.pauseSeconds)
+    const { device } = found
 
     // The phone's current run first (a new run means a new session and app install), then the
     // oldest run. In a run, the longest scenario first, and one with no history yet before all:
@@ -407,7 +429,8 @@ export async function leaseNext(
           or(
             isNull(queue.assignedDevice),
             eq(queue.assignedDevice, device.name),
-            sql`not exists (select 1 from ${devices} d where d.name = ${queue.assignedDevice} and d.enabled)`,
+            sql`not exists (select 1 from ${devices} d where d.name = ${queue.assignedDevice}
+              and d.enabled and coalesce(d.paused_until <= now(), true))`,
           ),
         ),
       )
@@ -445,6 +468,7 @@ export async function leaseNext(
       attempt: leased.attempt,
       account,
       leaseSeconds: config.LEASE_SECONDS,
+      sessionResetAt: device.healthSince,
     }
   })
 }
@@ -684,6 +708,67 @@ export async function setDeviceEnabled(name: string, enabled: boolean) {
   // its items in a fixed split are now anyone's (leaseNext): waiting phones look again
   if (!enabled) notifyWork()
   return true
+}
+
+// Three distinct failures on one phone, each recovered by another phone in the same run, are
+// evidence of device trouble. Check outside result transactions: health detection must never
+// lose a test result (R50). One transaction per phone, in name order, isolates a bad item (R51).
+export async function pauseUnhealthyDevices() {
+  // Bounded by physical phones/simulators on the connected machines (R24 hardware exception).
+  const phones = await db
+    .select({ name: devices.name })
+    .from(devices)
+    .where(and(eq(devices.enabled, true), sql`coalesce(${devices.pausedUntil} <= now(), true)`))
+    .orderBy(devices.name)
+  const failed: string[] = []
+  let paused = 0
+  for (const phone of phones) {
+    await db
+      .transaction(async (tx) => {
+        const [device] = await tx
+          .select()
+          .from(devices)
+          .where(and(eq(devices.name, phone.name), eq(devices.enabled, true)))
+          .limit(1)
+          .for('no key update', { skipLocked: true })
+        if (!device) return
+        const until = sql`now() + make_interval(secs => ${config.DEVICE_PAUSE_SECONDS})`
+        // Detect and update in one statement snapshot: a success committed before this
+        // decision resets the streak. Results themselves never need to wait for this check.
+        const changed = await tx.execute(sql`
+          WITH evidence AS (
+          SELECT f.run_id FROM ${results} f
+          JOIN ${queue} fq ON fq.id = f.queue_id
+          WHERE f.device = ${device.name} AND f.status = 'failed'
+            AND coalesce(${device.pausedUntil}::timestamptz <= now(), true)
+            AND fq.leased_at >= ${device.healthSince}
+            AND f.created_at > greatest(${device.healthSince}, coalesce((
+              SELECT p.created_at FROM ${results} p
+              WHERE p.device = ${device.name} AND p.status = 'passed'
+              ORDER BY p.created_at DESC LIMIT 1), ${device.healthSince}))
+            AND EXISTS (
+              SELECT 1 FROM ${queue} pq JOIN ${results} p ON p.queue_id = pq.id
+              WHERE pq.run_id = f.run_id AND pq.slot = fq.slot AND pq.attempt > fq.attempt
+                AND p.status = 'passed' AND p.device <> f.device)
+          GROUP BY f.run_id HAVING count(DISTINCT f.scenario_id) >= 3
+          ORDER BY f.run_id DESC LIMIT 1)
+          UPDATE ${devices} SET paused_until = ${until}, health_since = ${until},
+            pause_reason = '3 different scenarios failed here and passed on other phones in run #' || evidence.run_id
+          FROM evidence WHERE ${devices.name} = ${device.name}
+          RETURNING ${devices.name}`)
+        // Persisting the resume boundary excludes late retries/old in-flight work after recovery.
+        return changed.rows.length > 0
+      })
+      .then((changed) => {
+        if (changed) paused++
+      })
+      .catch((err) => failed.push(`phone ${phone.name}: ${messageOf(err)}`))
+  }
+  if (paused > 0) notifyWork() // fixed-split items can now go to other phones
+  if (failed.length > 0) {
+    throw new Error(`could not check ${failed.length} phone(s): ${failed.slice(0, 5).join('; ')}`)
+  }
+  return paused
 }
 
 type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {

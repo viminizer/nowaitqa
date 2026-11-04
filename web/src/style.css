@@ -103,6 +103,7 @@ main {
 
 /* Tables scroll sideways on a phone instead of breaking the page. */
 .scroll {
+  position: relative;
   overflow-x: auto;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -111,6 +112,10 @@ main {
 table {
   width: 100%;
   border-collapse: collapse;
+}
+.device-state {
+  min-width: calc(var(--space) * 28);
+  overflow-wrap: anywhere;
 }
 th,
 td {
@@ -172,7 +177,8 @@ tbody tr:last-child td {
 .status-idle {
   --c: var(--passed);
 }
-.status-flaky {
+.status-flaky,
+.status-paused {
   --c: var(--flaky);
 }
 .status-failed {

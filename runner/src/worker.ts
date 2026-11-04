@@ -4,15 +4,22 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { type Device, type Lease, messageOf } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { z } from 'zod'
-import { DeviceGoneError, heartbeat, lease, ResultNotSentError, sendResult } from './api.ts'
+import {
+  DeviceGoneError,
+  DevicePausedError,
+  heartbeat,
+  lease,
+  ResultNotSentError,
+  sendResult,
+} from './api.ts'
 import { commits } from './catalog.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
 
-type Session = { driver: Browser; runId: number; appId: string }
+type Session = { driver: Browser; runId: number; appId: string; resetAt: number }
 
-// ponytail: after an error the worker pauses, so a broken phone does not fail the whole queue.
-// A smarter health check can come later.
+// Setup errors get a short local pause. The server separately detects scenario failures that
+// pass on other phones and sends a cooldown through /lease.
 const ERROR_PAUSE_MS = 60_000
 
 export async function runWorker(device: Device) {
@@ -34,7 +41,10 @@ export async function runWorker(device: Device) {
       })
 
       // One session per phone for the whole run. A new run brings a new app build.
-      if (session?.runId === current.runId) {
+      if (
+        session?.runId === current.runId &&
+        session.resetAt === current.sessionResetAt.getTime()
+      ) {
         await resetApp(device, session)
       } else {
         await closeSession(device, session)
@@ -67,6 +77,12 @@ export async function runWorker(device: Device) {
       stopHeartbeat()
       await closeSession(device, session)
       session = null
+      if (err instanceof DevicePausedError) {
+        log(device.name, err.message)
+        // Session cleanup can be slow; its time already counts toward the server's cooldown.
+        await sleep(Math.max(0, err.until - Date.now()))
+        continue
+      }
       if (err instanceof DeviceGoneError) {
         log(device.name, 'worker stopped', err.message)
         return
@@ -151,7 +167,7 @@ async function openSession(device: Device, lease: Lease): Promise<Session> {
           .object({ bundleId: z.string().min(1) })
           .parse(await driver.execute('mobile: activeAppInfo')).bundleId
       : await driver.getCurrentPackage()
-    const session = { driver, runId: lease.runId, appId }
+    const session = { driver, runId: lease.runId, appId, resetAt: lease.sessionResetAt.getTime() }
     // Also clear an app left on the device by a previous run or failed attempt.
     if (ios) await resetApp(device, session)
     return session

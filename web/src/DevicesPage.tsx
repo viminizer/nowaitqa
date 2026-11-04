@@ -33,17 +33,24 @@ export function DevicesPage() {
                   {devices.map((d) => (
                     <tr key={d.name}>
                       <td>{d.name}</td>
-                      <td>
+                      <td className="device-state">
                         {!d.enabled ? (
                           <Status status="disabled" />
-                        ) : d.busy ? (
+                        ) : d.pausedUntil ? (
+                          <>
+                            <Status status="paused" />
+                            <p>{d.pauseReason}</p>
+                            <p className="muted">Resumes {time(d.pausedUntil)}</p>
+                          </>
+                        ) : !d.busy ? (
+                          <Status status="idle" />
+                        ) : null}
+                        {d.enabled && d.busy && (
                           <>
                             <Status status="busy" />{' '}
                             <a href={`#/runs/${d.busy.runId}`}>#{d.busy.runId}</a>{' '}
                             {d.busy.scenarioId}
                           </>
-                        ) : (
-                          <Status status="idle" />
                         )}
                       </td>
                       <td>{time(d.lastWorkAt)}</td>

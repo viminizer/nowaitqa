@@ -5,6 +5,7 @@ import {
   type Catalog,
   type CreateRunBody,
   Device,
+  DevicePause,
   Lease,
   messageOf,
   type ResultBody,
@@ -64,10 +65,20 @@ export async function getRun(id: number) {
 }
 
 export class DeviceGoneError extends Error {}
+export class DevicePausedError extends Error {
+  readonly until: number
+  constructor(readonly seconds: number) {
+    super(`device is paused for ${seconds}s`)
+    this.until = Date.now() + seconds * 1000
+  }
+}
 
 // Waits up to 30s on the server. null = no work right now.
 export async function lease(device: string, commits: string[], runId?: number) {
-  const res = await call('POST', '/lease', [200, 204, 404], { device, commits, runId })
+  const res = await call('POST', '/lease', [200, 204, 404, 423], { device, commits, runId })
+  if (res.status === 423) {
+    throw new DevicePausedError(DevicePause.parse(await res.json()).retryAfterSeconds)
+  }
   if (res.status === 404) throw new DeviceGoneError(`device ${device} is unknown or disabled`)
   if (res.status === 204) return null
   return Lease.parse(await res.json())
