@@ -77,6 +77,19 @@ unless you pass `--address 127.0.0.1`).
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute.
 
+### Session mode
+
+Set `SESSION_MODE` on the runner, then restart it. The setting applies to every device on that
+runner, on both Android and iOS Simulator:
+
+- `reuse` (default): reuse a session within a run and clear app data between scenarios.
+- `fresh`: open a new session, clear app data, run one scenario attempt, and close the session
+  after reporting its result. This adds session-startup overhead but helps diagnose session-state
+  problems. Retries also get a new session.
+
+Failures and health pauses close sessions in both modes. Reuse also starts a new session when
+the run or the device's health-reset marker changes. Invalid settings stop the runner at startup.
+
 ### Device health
 
 The server checks device health every 15 seconds. It pauses a phone when **three different
@@ -151,7 +164,7 @@ xcodebuild -project UIKitCatalog/UIKitCatalog.xcodeproj -scheme UIKitCatalog \
 Use the absolute path to `build/Build/Products/Debug-iphonesimulator/UIKitCatalog.app` as
 `appBuild`. No Apple signing account is needed for this simulator build.
 
-Like Android, iOS reuses a session within a run and clears app data before the next scenario.
+In reuse mode, iOS keeps a session within a run and clears app data before the next scenario.
 It also clears data at session startup, including retries. On iOS Simulator this uses
 `mobile: clearApp` with the app's bundle ID, then launches the app. It clears the app's data
 container; Keychain, privacy permissions and server-side account state are not reset. Verify

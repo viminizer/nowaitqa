@@ -16,6 +16,7 @@ const Env = z.object({
   SCENARIOS_REPO: z.string().min(1).optional(), // git URL the runner pulls every minute
   SCENARIOS_BRANCH: z.string().min(1).default('main'),
   SCENARIO_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),
+  SESSION_MODE: z.enum(['reuse', 'fresh']).default('reuse'),
 })
 
 const parsed = Env.refine((env) => !env.SCENARIOS_REPO || process.env.SCENARIOS_DIR, {
