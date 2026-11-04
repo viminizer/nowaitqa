@@ -40,15 +40,26 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req, reply) => {
       const deadline = Date.now() + LONG_POLL_MS
+      // The request body is already complete; watch the response for a disconnected consumer.
+      const controller = new AbortController()
+      const abort = () => controller.abort()
+      reply.raw.once('close', abort)
+      if (reply.raw.destroyed) abort()
       try {
         while (true) {
-          const lease = await leaseNext(req.body.device, req.body.commits, req.body.runId)
+          const lease = await leaseNext(
+            req.body.device,
+            req.body.commits,
+            req.body.runId,
+            controller.signal,
+          )
           if (lease) return lease
           const left = deadline - Date.now()
           if (left <= 0) return reply.code(204).send()
-          await waitForWork(left)
+          await waitForWork(left, controller.signal)
         }
       } catch (err) {
+        if (err === controller.signal.reason) return reply.hijack() // socket already closed
         if (err instanceof PausedDeviceError) {
           return reply.code(423).header('retry-after', err.retryAfterSeconds).send({
             error: 'device is paused',
@@ -57,6 +68,8 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         if (err instanceof UnknownDeviceError) return reply.code(404).send({ error: err.message })
         throw err
+      } finally {
+        reply.raw.removeListener('close', abort)
       }
     },
   )
