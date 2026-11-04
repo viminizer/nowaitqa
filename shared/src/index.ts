@@ -48,6 +48,7 @@ export type Device = z.infer<typeof Device>
 export const DeviceBody = DeviceFields.extend({ enabled: z.boolean().optional() }).superRefine(
   checkSimulator,
 )
+export type DeviceBody = z.infer<typeof DeviceBody>
 
 // A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')

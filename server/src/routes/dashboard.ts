@@ -6,6 +6,7 @@ import {
   CreatedRun,
   CreateRunBody,
   DbIdParam,
+  DeviceBody,
   DeviceEnabledBody,
   DeviceList,
   RunAgainBody,
@@ -18,6 +19,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { db } from '../db/index.ts'
 import { devices, queue, results } from '../db/schema.ts'
+import { BadDeviceError, registerDevice } from '../devices.ts'
 import {
   BadRunError,
   cancelRun,
@@ -115,6 +117,17 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
   )
 
   // --- actions: each is logged before it runs; Fastify logs its answer with the same reqId ---
+
+  app.post('/dashboard/api/devices', { schema: { body: DeviceBody } }, async (req, reply) => {
+    req.log.info('dashboard: add a device')
+    try {
+      await registerDevice(req.body, 'create')
+      return reply.code(204).send()
+    } catch (err) {
+      if (err instanceof BadDeviceError) return reply.code(400).send({ error: err.message })
+      throw err
+    }
+  })
 
   // A refusal (no scenarios, still running, nothing failed, no phones) is a 400.
   const started = async (start: Promise<number | null>, what: string, reply: FastifyReply) => {

@@ -22,7 +22,7 @@ function StartRun() {
   }
   return (
     <form
-      className="start-run"
+      className="action-form"
       onSubmit={submit}
       aria-labelledby="start-run-title"
       aria-busy={action.isPending}
