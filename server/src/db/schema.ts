@@ -87,6 +87,7 @@ export const results = pgTable(
       .references(() => runs.id),
     scenarioId: text().notNull(),
     attempt: integer().notNull(),
+    platform: text({ enum: ['android', 'ios'] }).notNull(),
     device: text().references(() => devices.name),
     status: text({ enum: ['passed', 'failed'] }).notNull(),
     durationMs: integer().notNull(),
@@ -99,7 +100,7 @@ export const results = pgTable(
     index('results_device_idx').on(t.device, t.createdAt), // dashboard: a phone's last work
     index('results_run_idx').on(t.runId), // a run's results (artifact cleanup)
     // expectedTimes: a scenario's latest passing attempts
-    index('results_passed_idx').on(t.scenarioId, t.id).where(sql`status = 'passed'`),
+    index('results_passed_idx').on(t.platform, t.scenarioId, t.id).where(sql`status = 'passed'`),
   ],
 )
 

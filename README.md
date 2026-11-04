@@ -77,6 +77,67 @@ unless you pass `--address 127.0.0.1`).
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute.
 
+### iOS Simulator
+
+iOS runs use XCUITest on a Mac with Xcode and an installed iOS Simulator runtime. Real iPhones
+are not supported yet. Tested with Appium 3.9.0, XCUITest 10.43.1, Xcode 16.4 and iOS 18.5.
+Pin the driver: newer releases may require a newer Appium or Xcode.
+
+```bash
+appium driver install xcuitest@10.43.1
+xcrun simctl list devices available
+appium --address 127.0.0.1 --port 4723
+```
+
+Register the simulator with `PUT /devices`, using its UUID from `simctl`:
+Boot it and wait for readiness with `xcrun simctl bootstatus <uuid> -b` before starting a run;
+the first boot of a new simulator may need several minutes to migrate its data.
+
+```json
+{
+  "name": "iphone-sim-a",
+  "platform": "ios",
+  "udid": "44DA6CC2-743E-459C-AE56-BC0D4EAE4497",
+  "appiumUrl": "http://127.0.0.1:4723",
+  "systemPort": 8100,
+  "host": "macmini-1"
+}
+```
+
+For iOS, `systemPort` is the WDA HTTP port and the next port is reserved for MJPEG. Give every
+simulator a separate pair (for example 8100/8101 and 8200/8201), with no overlap with other services.
+The runner also gives each simulator a separate Xcode build directory on the Appium host under
+`/tmp/nowait-wda-<uuid>`.
+
+Start an iOS run with `POST /runs`: `platform: "ios"` and `appBuild` pointing to a **simulator
+build** (`.app` on the Appium host, or a URL to a zipped `.app`). An iPhone `.ipa` cannot run in
+the simulator. The server never reads that path; Appium installs the build. Android and iOS runs
+use the same queue, but each device only takes work for its own platform.
+
+The samples include four iOS scenarios for [Appium's UIKitCatalog](https://github.com/appium/appium-ios/tree/main/packages/uicatalog):
+an alert, text entry, a switch and a slider. Build a pinned revision outside this repo:
+
+```bash
+git clone https://github.com/appium/appium-ios.git
+cd appium-ios
+git checkout afeb9cd03af16c7f3cea23633c82d715642c4e58
+cd packages/uicatalog
+xcodebuild -project UIKitCatalog/UIKitCatalog.xcodeproj -scheme UIKitCatalog \
+  -configuration Debug -sdk iphonesimulator -derivedDataPath build \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+Use the absolute path to `build/Build/Products/Debug-iphonesimulator/UIKitCatalog.app` as
+`appBuild`. No Apple signing account is needed for this simulator build.
+
+Like Android, iOS reuses a session within a run and clears app data before the next scenario.
+It also clears data at session startup, including retries. On iOS Simulator this uses
+`mobile: clearApp` with the app's bundle ID, then launches the app. It clears the app's data
+container; Keychain, privacy permissions and server-side account state are not reset. Verify
+the reset behavior for your app. Failed scenarios close the session before another attempt.
+Failure evidence includes a PNG screenshot and the last 500 device log lines; if either capture
+fails, its error is recorded in the log. An unavailable device log does not fail a scenario.
+
 ## Scenarios
 
 Scenarios live in your own folder or repo, not in nowait-qa. Point the runner's `SCENARIOS_DIR` at

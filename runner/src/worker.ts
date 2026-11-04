@@ -3,6 +3,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { type Device, type Lease, messageOf } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
+import { z } from 'zod'
 import { DeviceGoneError, heartbeat, lease, ResultNotSentError, sendResult } from './api.ts'
 import { commits } from './catalog.ts'
 import { log } from './log.ts'
@@ -20,21 +21,33 @@ export async function runWorker(device: Device) {
 
   while (true) {
     let current: Lease | null = null
+    let leaseGone = false
     let stopHeartbeat = () => {}
     try {
       current = await lease(device.name, commits(), session?.runId)
       if (!current) continue
       // From the moment we hold the lease: a first app install can take minutes.
       // If the lease is gone, ending the Appium session stops the scenario at its next command.
-      stopHeartbeat = keepLeaseAlive(device, current, () => closeSession(device, session))
+      stopHeartbeat = keepLeaseAlive(device, current, async () => {
+        leaseGone = true
+        await closeSession(device, session)
+      })
 
       // One session per phone for the whole run. A new run brings a new app build.
       if (session?.runId === current.runId) {
-        await resetApp(session)
+        await resetApp(device, session)
       } else {
         await closeSession(device, session)
         session = null
         session = await openSession(device, current)
+      }
+
+      // Cancellation may arrive while Xcode is still creating the session. The heartbeat had
+      // no session to close yet; release it as soon as creation finishes, without running code.
+      if (leaseGone) {
+        await closeSession(device, session)
+        session = null
+        continue
       }
 
       const result = await runScenario(session.driver, device, current)
@@ -93,7 +106,7 @@ function keepLeaseAlive(device: Device, current: Lease, onGone: () => Promise<vo
 }
 
 async function openSession(device: Device, lease: Lease): Promise<Session> {
-  if (device.platform !== 'android') throw new Error('iOS is not supported yet')
+  const ios = device.platform === 'ios'
   const url = new URL(device.appiumUrl)
   const driver = await remote({
     protocol: url.protocol.replace(':', ''),
@@ -102,22 +115,46 @@ async function openSession(device: Device, lease: Lease): Promise<Session> {
     path: url.pathname,
     logLevel: 'warn',
     waitforTimeout: 15_000, // how long waitForDisplayed and friends wait; phones can be slow
+    // A cold WDA build/boot takes longer than WebdriverIO's default 120s. Heartbeats continue
+    // throughout startup. Do not retry a timed-out POST /session: it may still create a session.
+    ...(ios ? { connectionRetryTimeout: 600_000, connectionRetryCount: 0 } : {}),
     capabilities: {
-      platformName: 'Android',
-      'appium:automationName': 'UiAutomator2',
       'appium:udid': device.udid,
-      'appium:systemPort': device.systemPort,
       'appium:app': lease.appBuild,
-      'appium:autoGrantPermissions': true,
       'appium:newCommandTimeout': 300,
-      'appium:adbExecTimeout': 60_000, // the 20s default is too short for slow phones and emulators
+      ...(ios
+        ? {
+            platformName: 'iOS',
+            'appium:automationName': 'XCUITest',
+            'appium:wdaLocalPort': device.systemPort,
+            'appium:wdaLaunchTimeout': 180_000, // a cold Xcode build can exceed the default 60s
+            'appium:wdaStartupRetries': 1,
+            'appium:mjpegServerPort': device.systemPort + 1,
+            'appium:derivedDataPath': `/tmp/nowait-wda-${device.udid.toLowerCase()}`,
+            'appium:screenshotQuality': 0, // artifacts are PNGs, including on iOS
+          }
+        : {
+            platformName: 'Android',
+            'appium:automationName': 'UiAutomator2',
+            'appium:systemPort': device.systemPort,
+            'appium:autoGrantPermissions': true,
+            'appium:adbExecTimeout': 60_000, // the default 20s is too short for slow phones
+          }),
     },
   })
   // From here on the session exists: close it if the rest fails, or it holds the phone's port
   // until Appium's newCommandTimeout.
   try {
-    await hideErrorDialogs(device, driver)
-    return { driver, runId: lease.runId, appId: await driver.getCurrentPackage() }
+    if (!ios) await hideErrorDialogs(device, driver)
+    const appId = ios
+      ? z
+          .object({ bundleId: z.string().min(1) })
+          .parse(await driver.execute('mobile: activeAppInfo')).bundleId
+      : await driver.getCurrentPackage()
+    const session = { driver, runId: lease.runId, appId }
+    // Also clear an app left on the device by a previous run or failed attempt.
+    if (ios) await resetApp(device, session)
+    return session
   } catch (err) {
     await driver
       .deleteSession()
@@ -154,8 +191,11 @@ async function hideErrorDialogs(device: Device, driver: Browser) {
 }
 
 // Every scenario starts from a fresh app: data cleared, app opened.
-async function resetApp(session: Session) {
-  await session.driver.execute('mobile: clearApp', { appId: session.appId })
+async function resetApp(device: Device, session: Session) {
+  await session.driver.execute(
+    'mobile: clearApp',
+    device.platform === 'ios' ? { bundleId: session.appId } : { appId: session.appId },
+  )
   await session.driver.activateApp(session.appId)
 }
 
