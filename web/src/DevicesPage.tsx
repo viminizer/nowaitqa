@@ -162,7 +162,17 @@ export function DevicesPage() {
                       </td>
                       <td>{time(d.lastSeenAt)}</td>
                       <td className="device-state">
-                        {!d.enabled ? (
+                        {d.cleanup ? (
+                          <>
+                            <Status status="failed" />
+                            <p>
+                              Cleanup required for{' '}
+                              <a href={`#/runs/${d.cleanup.runId}`}>#{d.cleanup.runId}</a>, attempt{' '}
+                              {d.cleanup.queueId}. Verify the stopped runner and Appium session
+                              before releasing this device.
+                            </p>
+                          </>
+                        ) : !d.enabled ? (
                           <Status status="disabled" />
                         ) : d.pausedUntil ? (
                           <>

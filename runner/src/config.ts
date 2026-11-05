@@ -2,6 +2,13 @@
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
+if (process.platform === 'win32') {
+  console.error(
+    'Isolated scenario execution requires a macOS or Linux runner (POSIX process groups)',
+  )
+  process.exit(1)
+}
+
 const Env = z.object({
   SERVER_URL: z.url(),
   RUNNER_TOKEN: z.string().min(16), // the server's RUNNER_TOKEN

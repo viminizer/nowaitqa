@@ -102,6 +102,7 @@ export const LeaseBody = z.object({
   device: z.string().min(1),
   commits: z.array(Commit).min(1),
   runId: DbId.optional(),
+  cleanup: z.boolean().default(false), // upgraded runners acknowledge stopped execution
 })
 
 export const Lease = z.object({
@@ -114,6 +115,7 @@ export const Lease = z.object({
   account: z.string().nullable(), // test account username; the password comes from runner env
   leaseSeconds: z.number().int(),
   sessionResetAt: z.coerce.date(), // new session required when this marker changes after a health pause
+  cleanupRequired: z.boolean().default(false),
 })
 export type Lease = z.infer<typeof Lease>
 
@@ -133,6 +135,7 @@ export const ResultBody = z.object({
   error: z.string().optional(),
   screenshot: z.base64().optional(), // PNG, as WebdriverIO's takeScreenshot() returns it
   log: z.string().optional(),
+  cleanupComplete: z.boolean().optional(),
 })
 export type ResultBody = z.infer<typeof ResultBody>
 
@@ -257,6 +260,10 @@ export const DeviceList = z.object({
       lastWorkAt: z.coerce.date().nullable(), // when it last finished an attempt
       pausedUntil: z.coerce.date().nullable(), // null when the cooldown is over, by the server's clock
       pauseReason: z.string().nullable(),
+      cleanup: z
+        .object({ queueId: DbId, runId: DbId, scenarioId: z.string() })
+        .nullable()
+        .default(null),
     }),
   ),
 })

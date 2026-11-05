@@ -398,6 +398,7 @@ export async function leaseNext(
   commits: string[],
   currentRunId = 0,
   signal: AbortSignal,
+  cleanup = false,
 ): Promise<Lease | null> {
   signal.throwIfAborted()
   const lease = await db.transaction(async (tx) => {
@@ -423,7 +424,12 @@ export async function leaseNext(
     const [busy] = await tx
       .select({ id: queue.id })
       .from(queue)
-      .where(and(eq(queue.device, device.name), eq(queue.status, 'leased')))
+      .where(
+        and(
+          eq(queue.device, device.name),
+          or(eq(queue.status, 'leased'), eq(queue.cleanupPending, true)),
+        ),
+      )
       .limit(1)
     if (busy) return null
 
@@ -469,6 +475,7 @@ export async function leaseNext(
         device: device.name,
         leasedAt: sql`now()`,
         leaseUntil: leaseEnd(),
+        cleanupPending: cleanup,
       })
       .where(eq(queue.id, row.id))
       .returning()
@@ -486,6 +493,7 @@ export async function leaseNext(
       account,
       leaseSeconds: config.LEASE_SECONDS,
       sessionResetAt: device.healthSince,
+      cleanupRequired: cleanup,
     }
   })
   // COMMIT is asynchronous too: a disconnect during it needs compensation after it finishes.
@@ -493,7 +501,13 @@ export async function leaseNext(
   if (signal.aborted && lease) {
     const returned = await db
       .update(queue)
-      .set({ status: 'pending', device: null, leasedAt: null, leaseUntil: null })
+      .set({
+        status: 'pending',
+        device: null,
+        leasedAt: null,
+        leaseUntil: null,
+        cleanupPending: false,
+      })
       .where(
         and(eq(queue.id, lease.queueId), eq(queue.device, deviceName), eq(queue.status, 'leased')),
       )
@@ -506,12 +520,13 @@ export async function leaseNext(
 }
 
 // Returns a free account's username, null when the pool is empty (the app needs no login),
-// or false when every account is busy. An account is free when its queue row is not leased.
+// or false when every account is busy. Leases and unconfirmed cleanup both reserve an account.
 async function takeAccount(tx: Tx, queueId: number): Promise<string | null | false> {
   const free = await tx.execute<{ username: string }>(sql`
     SELECT a.username FROM ${accounts} a
     WHERE a.queue_id IS NULL
-       OR NOT EXISTS (SELECT 1 FROM ${queue} q WHERE q.id = a.queue_id AND q.status = 'leased')
+       OR NOT EXISTS (SELECT 1 FROM ${queue} q WHERE q.id = a.queue_id
+         AND (q.status = 'leased' OR q.cleanup_pending))
     LIMIT 1 FOR UPDATE SKIP LOCKED`)
   const username = free.rows[0]?.username
   if (!username) {
@@ -529,6 +544,18 @@ export async function heartbeat(queueId: number, device: string) {
     .where(and(eq(queue.id, queueId), eq(queue.device, device), eq(queue.status, 'leased')))
     .returning({ id: queue.id })
   return updated.length > 0
+}
+
+// Idempotent acknowledgement after execution stopped and session cleanup was confirmed. A leased
+// row remains busy until its result/expiry; a cancelled/expired row can now release its resources.
+export async function releaseLease(queueId: number, device: string) {
+  const changed = await db
+    .update(queue)
+    .set({ cleanupPending: false })
+    .where(and(eq(queue.id, queueId), eq(queue.device, device)))
+    .returning({ id: queue.id })
+  if (changed.length > 0) notifyWork()
+  return changed.length > 0
 }
 
 // --- finishing attempts ----------------------------------------------------------------------
@@ -577,7 +604,11 @@ export async function submitResult(body: ResultBody) {
 
   const saved = await db.transaction(async (tx) => {
     // the lease may have run out while the files went up
-    const [done] = await tx.update(queue).set({ status: 'done' }).where(leasedHere).returning()
+    const [done] = await tx
+      .update(queue)
+      .set({ status: 'done', ...(body.cleanupComplete ? { cleanupPending: false } : {}) })
+      .where(leasedHere)
+      .returning()
     if (!done) return false
     await recordAttempt(tx, done, {
       status: body.status,
@@ -679,7 +710,7 @@ export async function cancelRun(runId: number) {
     await closeRun(tx, runId, 'cancelled on the dashboard')
     return true
   })
-  if (cancelled) notifyWork() // freed accounts
+  if (cancelled) notifyWork() // legacy accounts are free; upgraded leases still require cleanup
   return cancelled
 }
 

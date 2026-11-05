@@ -71,12 +71,14 @@ export const queue = pgTable(
     device: text().references(() => devices.name), // the phone holding (or that held) the lease
     leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
+    cleanupPending: boolean().notNull().default(false),
   },
   (t) => [
     index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),
     index('queue_run_idx').on(t.runId, t.id), // a run's attempts (dashboard, summaries)
     index('queue_slot_idx').on(t.runId, t.slot, t.attempt), // health: a failed item's later attempts
     index('queue_leased_idx').on(t.device).where(sql`status = 'leased'`), // dashboard: busy phones
+    index('queue_cleanup_idx').on(t.device).where(sql`cleanup_pending`),
   ],
 )
 
@@ -137,7 +139,7 @@ export const notifiersOn = pgTable('notifiers_on', {
   since: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
 
-// Test account pool. An account is busy while the queue row it points to is leased.
+// Test account pool. An account is busy while its queue row is leased or awaiting cleanup.
 // Passwords are not stored here: the runner reads them from its env.
 export const accounts = pgTable('accounts', {
   username: text().primaryKey(),

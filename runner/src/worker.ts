@@ -1,5 +1,4 @@
-// One worker per phone: take the next scenario, run it, report it, repeat.
-
+// One worker per phone: take the next scenario, stop its executor, report it, repeat.
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   DEVICE_CONTACT_INTERVAL_MS,
@@ -14,48 +13,55 @@ import {
   contactDevice,
   DeviceGoneError,
   DevicePausedError,
-  heartbeat,
   lease,
   ResultNotSentError,
+  releaseLease,
   sendResult,
 } from './api.ts'
+import { type AppiumGate, openAppiumGate } from './appium-gate.ts'
 import { commits } from './catalog.ts'
 import { config } from './config.ts'
+import { type LeaseGuard, watchLease } from './lease-guard.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
 
 type Session = { driver: Browser; runId: number; appId: string; resetAt: number }
-
-// Setup errors get a short local pause. The server separately detects scenario failures that
-// pass on other phones and sends a cooldown through /lease.
 const ERROR_PAUSE_MS = 60_000
 
-export async function runWorker(device: Device) {
+export async function runWorker(device: Device, shutdown = new AbortController().signal) {
   log(device.name, 'worker started')
+  const gate = await openAppiumGate(device)
   const stopContact = every(
     DEVICE_CONTACT_INTERVAL_MS,
     'runner contact',
     (signal) => contactDevice(device, signal),
-    { error: (err, message) => log(device.name, message, err) },
+    {
+      error: (err, message) => log(device.name, message, err),
+    },
   )
   let session: Session | null = null
-
+  const acknowledge = async (current: Lease) => {
+    try {
+      return await releaseLease(current.queueId, device.name)
+    } catch (err) {
+      log(device.name, `cleanup acknowledgement for ${current.queueId} failed`, err)
+      return false
+    }
+  }
   try {
-    while (true) {
+    while (!shutdown.aborted) {
       let current: Lease | null = null
-      let leaseGone = false
-      let stopHeartbeat = () => {}
+      let guard: LeaseGuard | undefined
+      let publishing = false
+      let stopped = true
       try {
-        current = await lease(device.name, commits(), session?.runId)
+        current = await lease(device.name, commits(), session?.runId, shutdown)
         if (!current) continue
-        // From the moment we hold the lease: a first app install can take minutes.
-        // If the lease is gone, ending the Appium session stops the scenario at its next command.
-        stopHeartbeat = keepLeaseAlive(device, current, async () => {
-          leaseGone = true
-          await closeSession(device, session)
-        })
-
-        // Reuse only within the same run and health epoch. Fresh mode always opens a new session.
+        if (!current.cleanupRequired)
+          throw new Error('upgrade the server: cleanup acknowledgement protocol is required')
+        guard = watchLease(device, current, shutdown)
+        let headers = gate.activate(guard)
+        await guard.renew()
         if (
           config.SESSION_MODE === 'reuse' &&
           session?.runId === current.runId &&
@@ -63,96 +69,109 @@ export async function runWorker(device: Device) {
         ) {
           await resetApp(device, session)
         } else {
-          await closeSession(device, session)
+          if (!(await gate.cleanup())) throw new Error('previous session cleanup not confirmed')
           session = null
-          session = await openSession(device, current)
+          headers = gate.activate(guard)
+          session = await openSession(device, current, gate)
         }
-
-        // Cancellation may arrive while Xcode is still creating the session. The heartbeat had
-        // no session to close yet; release it as soon as creation finishes, without running code.
-        if (leaseGone) {
-          await closeSession(device, session)
+        guard.check()
+        const execution = await runScenario(
+          session.driver,
+          device,
+          current,
+          guard.signal,
+          gate,
+          headers,
+        )
+        stopped = execution.stopped
+        let clean = stopped
+        if (
+          config.SESSION_MODE === 'fresh' ||
+          execution.result.status === 'failed' ||
+          guard.signal.aborted ||
+          gate.needsCleanup
+        ) {
+          clean = (await gate.cleanup()) && stopped
           session = null
-          continue
         }
-
-        const result = await runScenario(session.driver, device, current)
-        stopHeartbeat()
-        const saved = await sendResult(result)
-        if (!saved) {
-          const why = 'the lease was gone, or an earlier try already saved it'
-          log(device.name, `result for ${current.scenarioId} not recorded by this send: ${why}`)
-        }
-
-        // Fresh mode also releases passing attempts. A failure always starts clean next time.
-        if (config.SESSION_MODE === 'fresh' || result.status === 'failed') {
-          await closeSession(device, session)
-          session = null
+        gate.stopCommands()
+        guard.stop()
+        // A cancelled/expired run can already have its outcome. Its separately retained
+        // device/account reservation is released only after execution and cleanup are confirmed.
+        const acknowledged = clean && (await acknowledge(current))
+        publishing = true
+        const saved = await sendResult({ ...execution.result, cleanupComplete: clean })
+        if (!saved)
+          log(
+            device.name,
+            `result for ${current.scenarioId} was already finished or its lease is gone`,
+          )
+        if (!clean || (!acknowledged && !saved)) {
+          log(
+            device.name,
+            `cleanup for attempt ${current.queueId} is not confirmed; worker stopped and resources remain reserved`,
+          )
+          return
         }
       } catch (err) {
-        stopHeartbeat()
-        await closeSession(device, session)
+        gate.stopCommands()
+        const clean = (await gate.cleanup()) && stopped
+        guard?.stop()
         session = null
+        if (current && clean) await acknowledge(current)
+        if (current && !publishing) await reportRunnerError(device, current, err, clean)
+        if (!clean) {
+          log(
+            device.name,
+            `cleanup for attempt ${current?.queueId} is not confirmed; resources remain reserved`,
+            err,
+          )
+          return
+        }
+        if (shutdown.aborted) return
         if (err instanceof DevicePausedError) {
           log(device.name, err.message)
-          // Session cleanup can be slow; its time already counts toward the server's cooldown.
-          await sleep(Math.max(0, err.until - Date.now()))
+          await pause(Math.max(0, err.until - Date.now()), shutdown)
           continue
         }
         if (err instanceof DeviceGoneError) {
           log(device.name, 'worker stopped', err.message)
           return
         }
-        // A result that could not be sent is not replaced by a "runner error" result: one of its
-        // tries may still be saved by the server, and the error report would win over it. Its lease
-        // runs out instead: "lease expired", and the scenario runs again if it has attempts left
-        // (on its last attempt it stays failed). The phone itself is fine, so no pause.
+        // Never replace an outcome whose send might already have reached the server.
         if (err instanceof ResultNotSentError) {
-          log(device.name, `${err.message}; unless a try got through, it counts as "lease expired"`)
+          log(device.name, `${err.message}; unsaved work expires`)
           continue
         }
         log(device.name, 'worker error', err)
-        if (current) await reportRunnerError(device, current, err)
-        await sleep(ERROR_PAUSE_MS)
+        if (current && !current.cleanupRequired) return
+        await pause(ERROR_PAUSE_MS, shutdown)
+      } finally {
+        guard?.stop()
       }
     }
   } finally {
     stopContact()
+    if (!(await gate.cleanup())) log(device.name, 'worker stopped with unconfirmed session cleanup')
+    await gate.close()
   }
 }
 
-// Tells the server "still working" four times per lease period, and calls onGone once if the
-// lease is gone (it expired, or the run was stuck and closed). Returns the stop function.
-function keepLeaseAlive(device: Device, current: Lease, onGone: () => Promise<void>) {
-  const timer = setInterval(
-    () => {
-      heartbeat(current.queueId, device.name)
-        .then(async (alive) => {
-          if (alive) return
-          clearInterval(timer)
-          log(device.name, `lease ${current.queueId} is gone: stopping the scenario`)
-          await onGone()
-        })
-        .catch((err) => log(device.name, 'heartbeat failed', err))
-    },
-    (current.leaseSeconds * 1000) / 4,
-  )
-  return () => clearInterval(timer)
+async function pause(ms: number, signal: AbortSignal) {
+  await sleep(ms, undefined, { signal }).catch((err) => {
+    if (!signal.aborted) throw err
+  })
 }
 
-async function openSession(device: Device, lease: Lease): Promise<Session> {
+async function openSession(device: Device, lease: Lease, gate: AppiumGate): Promise<Session> {
   const ios = device.platform === 'ios'
-  const url = new URL(device.appiumUrl)
   const driver = await remote({
-    protocol: url.protocol.replace(':', ''),
-    hostname: url.hostname,
-    port: Number(url.port),
-    path: url.pathname,
+    ...gate.options,
     logLevel: 'warn',
-    waitforTimeout: 15_000, // how long waitForDisplayed and friends wait; phones can be slow
-    // A cold WDA build/boot takes longer than WebdriverIO's default 120s. Heartbeats continue
-    // throughout startup. Do not retry a timed-out POST /session: it may still create a session.
-    ...(ios ? { connectionRetryTimeout: 600_000, connectionRetryCount: 0 } : {}),
+    waitforTimeout: 15_000,
+    // No automatic POST /session retry: a timed-out request may still create a session.
+    connectionRetryTimeout: ios ? 600_000 : 120_000,
+    connectionRetryCount: 0,
     capabilities: {
       'appium:udid': device.udid,
       'appium:app': lease.appBuild,
@@ -162,40 +181,31 @@ async function openSession(device: Device, lease: Lease): Promise<Session> {
             platformName: 'iOS',
             'appium:automationName': 'XCUITest',
             'appium:wdaLocalPort': device.systemPort,
-            'appium:wdaLaunchTimeout': 180_000, // a cold Xcode build can exceed the default 60s
+            'appium:wdaLaunchTimeout': 180_000,
             'appium:wdaStartupRetries': 1,
             'appium:mjpegServerPort': device.systemPort + 1,
             'appium:derivedDataPath': `/tmp/nowait-wda-${device.udid.toLowerCase()}`,
-            'appium:screenshotQuality': 0, // artifacts are PNGs, including on iOS
+            'appium:screenshotQuality': 0,
           }
         : {
             platformName: 'Android',
             'appium:automationName': 'UiAutomator2',
             'appium:systemPort': device.systemPort,
             'appium:autoGrantPermissions': true,
-            'appium:adbExecTimeout': 60_000, // the default 20s is too short for slow phones
+            'appium:adbExecTimeout': 60_000,
           }),
     },
   })
-  // From here on the session exists: close it if the rest fails, or it holds the phone's port
-  // until Appium's newCommandTimeout.
-  try {
-    if (!ios) await hideErrorDialogs(device, driver)
-    const appId = ios
-      ? z
-          .object({ bundleId: z.string().min(1) })
-          .parse(await driver.execute('mobile: activeAppInfo')).bundleId
-      : await driver.getCurrentPackage()
-    const session = { driver, runId: lease.runId, appId, resetAt: lease.sessionResetAt.getTime() }
-    // Also clear an app left on the device by a previous run or failed attempt.
-    if (ios || config.SESSION_MODE === 'fresh') await resetApp(device, session)
-    return session
-  } catch (err) {
-    await driver
-      .deleteSession()
-      .catch((e) => log(device.name, 'could not close the Appium session', e))
-    throw err
-  }
+  // The gate records the session before startup/reset can fail, and the parent cleans it
+  // directly even when further ordinary commands are forbidden after lease loss.
+  if (!ios) await hideErrorDialogs(device, driver)
+  const appId = ios
+    ? z.object({ bundleId: z.string().min(1) }).parse(await driver.execute('mobile: activeAppInfo'))
+        .bundleId
+    : await driver.getCurrentPackage()
+  const session = { driver, runId: lease.runId, appId, resetAt: lease.sessionResetAt.getTime() }
+  if (ios || config.SESSION_MODE === 'fresh') await resetApp(device, session)
+  return session
 }
 
 // When an app hangs, Android shows "<app> isn't responding" over every app, and every scenario on
@@ -225,7 +235,6 @@ async function hideErrorDialogs(device: Device, driver: Browser) {
     )
 }
 
-// Every scenario starts from a fresh app: data cleared, app opened.
 async function resetApp(device: Device, session: Session) {
   await session.driver.execute(
     'mobile: clearApp',
@@ -234,20 +243,18 @@ async function resetApp(device: Device, session: Session) {
   await session.driver.activateApp(session.appId)
 }
 
-async function closeSession(device: Device, session: Session | null) {
-  await session?.driver
-    .deleteSession()
-    .catch((err) => log(device.name, 'could not close the Appium session', err))
-}
-
-// The scenario never ran (session or server problem): tell the server now instead of letting
-// the lease run out. It counts as a failed attempt, so the retry can go to another phone.
-async function reportRunnerError(device: Device, lease: Lease, err: unknown) {
+async function reportRunnerError(
+  device: Device,
+  lease: Lease,
+  err: unknown,
+  cleanupComplete: boolean,
+) {
   await sendResult({
     queueId: lease.queueId,
     device: device.name,
     status: 'failed',
     durationMs: 0,
     error: `runner error: ${messageOf(err)}`,
+    cleanupComplete,
   }).catch((sendErr) => log(device.name, 'could not report the runner error', sendErr))
 }
