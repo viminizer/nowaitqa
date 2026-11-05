@@ -1,5 +1,6 @@
 import type {
   AttemptOrigin,
+  AttemptProgress,
   Catalog,
   ExecutionProfile,
   InputRuntime,
@@ -95,6 +96,7 @@ export const queue = pgTable(
     leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
     cleanupPending: boolean().notNull().default(false),
+    progress: jsonb().$type<AttemptProgress>(),
     inputRuntime: jsonb().$type<InputRuntime>(),
     inputsVerified: boolean().notNull().default(false),
   },
@@ -126,6 +128,7 @@ export const results = pgTable(
     durationMs: integer().notNull(),
     error: text(),
     screenshot: text(), // artifact key (storage/), like "5/views.checkbox-0-1.png"
+    diagnostics: text(), // bounded JSON artifact key
     log: text(), // artifact key
     phase: text().$type<AttemptOrigin['phase']>().notNull().default('unknown'),
     failureKind: text().$type<AttemptOrigin['failureKind']>().default('unknown'),

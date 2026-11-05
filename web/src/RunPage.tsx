@@ -5,6 +5,7 @@ import {
   inputSource,
   originText,
   RunDetail,
+  stageText,
 } from '@nowait/shared'
 import { useApi } from './api.ts'
 import { Timeline } from './Timeline.tsx'
@@ -14,7 +15,7 @@ import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.ts
 const isRunning = (run: RunDetail) => run.status === 'running'
 const isRunRunning = (page: AttemptPage) => page.runStatus === 'running'
 
-const file = (a: Attempt, name: 'screenshot' | 'log') =>
+const file = (a: Attempt, name: 'screenshot' | 'log' | 'diagnostics') =>
   `/dashboard/api/attempts/${a.queueId}/${name}`
 
 // The first line of an error; the stack trace opens on a click.
@@ -90,7 +91,43 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                       <td>{a.device ?? '-'}</td>
                       <td>{duration(a.durationMs)}</td>
                       <td className="attempt-detail">
+                        <p>
+                          {a.status === 'pending'
+                            ? 'Waiting for resources'
+                            : a.progress
+                              ? stageText(a.progress.stage)
+                              : 'Progress unavailable'}
+                        </p>
                         {originText(a)}
+                        {a.progress && (
+                          <details>
+                            <summary>Phase and command history</summary>
+                            <p className="muted">
+                              Last update {time(a.progress.updatedAt)}. The last reported phase may
+                              be stale after an interruption.
+                            </p>
+                            {a.progress.events.map((e) => (
+                              <p key={e.id}>
+                                {time(e.at)} · {stageText(e.stage)}
+                              </p>
+                            ))}
+                            {a.progress.commands.length === 0 ? (
+                              <p>No command timings available.</p>
+                            ) : (
+                              a.progress.commands.map((c) => (
+                                <p key={c.id}>
+                                  {time(c.startedAt)} · {c.command.replaceAll('_', ' ')} ·{' '}
+                                  {c.status}
+                                  {c.status !== 'running' && <> · {duration(c.durationMs)}</>}
+                                </p>
+                              ))
+                            )}
+                            <p className="muted">
+                              Older entries omitted: {a.progress.droppedEvents} phases,{' '}
+                              {a.progress.droppedCommands} commands.
+                            </p>
+                          </details>
+                        )}
                         <p className="muted">
                           {a.inputsVerified ? 'Inputs verified' : 'Inputs unavailable'}
                         </p>
@@ -119,6 +156,9 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                         {a.error && <ErrorText error={a.error} />}
                       </td>
                       <td className="files">
+                        <a href={file(a, 'diagnostics')}>
+                          Download diagnostics{!a.diagnostics && ' (available metadata)'}
+                        </a>
                         {a.screenshot && (
                           <a href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
                             <img

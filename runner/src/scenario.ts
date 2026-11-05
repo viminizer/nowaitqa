@@ -6,13 +6,13 @@ import type { Device, FailureKind, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
 import type { AppiumGate } from './appium-gate.ts'
 import { config } from './config.ts'
+import type { AttemptTrace } from './diagnostics.ts'
 import type { LeaseGuard } from './lease-guard.ts'
 import { log } from './log.ts'
 import { ScenarioOutcome, ScenarioReady, ScenarioStarted } from './scenario-protocol.ts'
 
 const STOP_GRACE_MS = 250
 const STOP_LIMIT_MS = 5_000
-const EVIDENCE_LIMIT_MS = 15_000
 
 async function stopExecutor(child: ChildProcess, exited: Promise<void>, device: string) {
   if (!child.pid) return true
@@ -74,6 +74,7 @@ export async function runScenario(
   gate: AppiumGate,
   headers: Record<string, string>,
   file: string,
+  trace: AttemptTrace,
 ) {
   const started = performance.now()
   const signal = guard.signal
@@ -129,6 +130,7 @@ export async function runScenario(
         if (ScenarioStarted.safeParse(message).success) {
           scenarioStarted = true
           guard.markStarted()
+          trace.enter('scenario')
           return
         }
         if (ScenarioReady.safeParse(message).success) {
@@ -194,45 +196,6 @@ export async function runScenario(
       .filter(Boolean)
       .join('\n')
     log(device.name, result.error)
-  } else if (outcome.status === 'failed' && !signal.aborted) {
-    log(device.name, `${lease.scenarioId} failed`, outcome.error)
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      Object.assign(
-        result,
-        await Promise.race([
-          capture(driver, device).catch((err) => ({
-            log: `failure evidence could not be collected: ${String(err)}`,
-          })),
-          new Promise((resolve) => {
-            timer = setTimeout(() => {
-              gate.stopCommands()
-              resolve({ log: 'failure evidence timed out' })
-            }, EVIDENCE_LIMIT_MS)
-          }),
-        ]),
-      )
-    } finally {
-      clearTimeout(timer)
-    }
   }
   return { result, stopped }
-}
-
-async function capture(driver: Browser, device: Device) {
-  const notes: string[] = []
-  const screenshot = await driver.takeScreenshot().catch((err) => {
-    notes.push(`screenshot failed: ${err}`)
-    return undefined
-  })
-  const lines = await driver
-    .getLogs(device.platform === 'android' ? 'logcat' : 'syslog')
-    .catch((err) => {
-      notes.push(`device log failed: ${err}`)
-      return []
-    })
-  const deviceLog = (lines as { timestamp: number; message: string }[])
-    .slice(-500)
-    .map((l) => `${new Date(l.timestamp).toISOString()} ${l.message}`)
-  return { screenshot, log: [...notes, ...deviceLog].join('\n') }
 }

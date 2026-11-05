@@ -2,6 +2,8 @@
 // and actions must send ACTION_HEADER (see main.ts).
 import {
   ApiError,
+  AttemptDiagnostics,
+  AttemptOrigin,
   AttemptPage,
   CreatedRun,
   CreateRunBody,
@@ -10,6 +12,7 @@ import {
   type DeviceConnectivity,
   DeviceEnabledBody,
   DeviceList,
+  DiagnosticDownload,
   ManifestPage,
   ManifestQuery,
   RunAgainBody,
@@ -22,7 +25,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
-import { devices, queue, results } from '../db/schema.ts'
+import { devices, queue, results, runs } from '../db/schema.ts'
 import { BadDeviceError, registerDevice } from '../devices.ts'
 import {
   BadRunError,
@@ -142,6 +145,63 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       }),
     }
   })
+
+  app.get(
+    '/dashboard/api/attempts/:queueId/diagnostics',
+    {
+      schema: {
+        params: z.object({ queueId: DbIdParam }),
+        response: { 200: DiagnosticDownload, 404: ApiError },
+      },
+    },
+    async (req, reply) => {
+      const item = await db.query.queue.findFirst({ where: eq(queue.id, req.params.queueId) })
+      if (!item) return reply.code(404).send({ error: 'attempt not found' })
+      const run = await db.query.runs.findFirst({ where: eq(runs.id, item.runId) })
+      const result = await db.query.results.findFirst({ where: eq(results.queueId, item.id) })
+      let diagnostics: AttemptDiagnostics | null = null
+      let missing = result?.diagnostics
+        ? 'The retained diagnostic artifact is unavailable.'
+        : 'No retained runner bundle; this may be a legacy, interrupted, or expired attempt.'
+      if (result?.diagnostics) {
+        try {
+          const data = await readArtifact(result.diagnostics)
+          if (data) diagnostics = AttemptDiagnostics.parse(JSON.parse(data.toString()))
+        } catch (err) {
+          req.log.warn(
+            { queueId: item.id, error: err instanceof Error ? err.name : 'unknown error' },
+            'diagnostic artifact unavailable; returning metadata',
+          )
+          missing =
+            'The diagnostic artifact could not be read or validated; available metadata is included.'
+        }
+      }
+      const artifact = (file: 'screenshot' | 'log') =>
+        result?.[file] ? `/dashboard/api/attempts/${item.id}/${file}` : null
+      return reply
+        .header('content-disposition', `attachment; filename="attempt-${item.id}-diagnostics.json"`)
+        .send({
+          commit: run?.commit ?? 'unknown',
+          inputs: {
+            resolved: run?.resolvedInputs ?? null,
+            expected: run?.expectedInputs ?? null,
+          },
+          runtime: item.inputRuntime,
+          queueId: item.id,
+          runId: item.runId,
+          scenarioId: item.scenarioId,
+          attempt: item.attempt,
+          device: item.device,
+          profile: item.profile,
+          origin: result ? AttemptOrigin.parse(result) : null,
+          progress: item.progress,
+          diagnostics,
+          missing: diagnostics ? null : missing,
+          screenshot: artifact('screenshot'),
+          log: artifact('log'),
+        })
+    },
+  )
 
   // An attempt's screenshot or log. The key comes from the database, never from the URL.
   app.get(

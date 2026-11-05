@@ -49,7 +49,7 @@ export async function deleteOldArtifacts() {
         and(
           gt(results.runId, after),
           lt(runs.createdAt, sql`now() - make_interval(days => ${config.ARTIFACT_DAYS})`),
-          or(isNotNull(results.screenshot), isNotNull(results.log)),
+          or(isNotNull(results.screenshot), isNotNull(results.log), isNotNull(results.diagnostics)),
         ),
       )
       .orderBy(asc(results.runId))
@@ -60,7 +60,7 @@ export async function deleteOldArtifacts() {
         await store.deleteRun(runId)
         await db
           .update(results)
-          .set({ screenshot: null, log: null })
+          .set({ screenshot: null, log: null, diagnostics: null })
           .where(eq(results.runId, runId))
         inARow = 0
       } catch (err) {

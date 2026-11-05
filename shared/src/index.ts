@@ -330,6 +330,113 @@ export const DevicePause = z.object({
   retryAfterSeconds: z.number().int().positive().max(86_400),
 })
 
+// Diagnostic histories are snapshots, bounded even for a long or command-heavy attempt.
+export const AttemptStage = z.enum([
+  'app_staging',
+  'session_start',
+  'session_reset',
+  'executor_start',
+  'scenario',
+  'evidence',
+  'cleanup',
+  'finished',
+])
+export type AttemptStage = z.infer<typeof AttemptStage>
+export const CommandTiming = z.object({
+  id: DbId,
+  command: z.enum([
+    'session_create',
+    'session_delete',
+    'screenshot',
+    'source',
+    'device_logs',
+    'appium_events',
+    'find_element',
+    'click',
+    'set_value',
+    'execute',
+    'other',
+  ]),
+  startedAt: z.iso.datetime(),
+  durationMs: z.number().int().nonnegative().max(INT4_MAX),
+  status: z.enum(['running', 'passed', 'failed', 'interrupted']),
+  httpStatus: z.number().int().min(100).max(599).optional(),
+})
+export type CommandTiming = z.infer<typeof CommandTiming>
+export const AttemptProgress = z.object({
+  revision: DbId,
+  stage: AttemptStage,
+  updatedAt: z.iso.datetime(),
+  events: z.array(z.object({ id: DbId, stage: AttemptStage, at: z.iso.datetime() })).max(80),
+  commands: z.array(CommandTiming).max(80),
+  droppedEvents: z.number().int().nonnegative().max(INT4_MAX),
+  droppedCommands: z.number().int().nonnegative().max(INT4_MAX),
+})
+export type AttemptProgress = z.infer<typeof AttemptProgress>
+export const ProgressBody = z.object({
+  queueId: DbId,
+  device: z.string().min(1),
+  progress: AttemptProgress,
+})
+export type ProgressBody = z.infer<typeof ProgressBody>
+export const AttemptDiagnostics = z.object({
+  version: z.literal(1),
+  progress: AttemptProgress,
+  sessionId: z.string().max(200).nullable(),
+  error: z.string().max(8192).nullable(),
+  runtime: InputRuntime.nullable(),
+  config: ResolvedInputs.shape.config,
+  deviceLog: z.string().max(65536).nullable(),
+  hierarchy: z.string().max(65536).nullable(),
+  appiumEvents: z
+    .array(
+      z.object({
+        command: CommandTiming.shape.command,
+        startedAt: z.number().finite(),
+        durationMs: z.number().nonnegative().finite(),
+      }),
+    )
+    .max(80),
+  missing: z
+    .array(
+      z.object({
+        item: z.enum(['screenshot', 'device_log', 'hierarchy', 'appium_events', 'appium_host_log']),
+        reason: z.string().max(200),
+      }),
+    )
+    .max(5),
+})
+export type AttemptDiagnostics = z.infer<typeof AttemptDiagnostics>
+export const DiagnosticDownload = z.object({
+  commit: z.string(),
+  inputs: InputManifest.omit({ intent: true }),
+  runtime: InputRuntime.nullable(),
+  queueId: DbId,
+  runId: DbId,
+  scenarioId: z.string(),
+  attempt: DbId,
+  device: z.string().nullable(),
+  profile: ExecutionProfile.nullable(),
+  origin: AttemptOrigin.nullable(),
+  progress: AttemptProgress.nullable(),
+  diagnostics: AttemptDiagnostics.nullable(),
+  missing: z.string().nullable(),
+  screenshot: z.string().nullable(),
+  log: z.string().nullable(),
+})
+export function stageText(stage: AttemptStage) {
+  return {
+    app_staging: 'App preparation',
+    session_start: 'Session preparation',
+    session_reset: 'Session reset',
+    executor_start: 'Executor startup',
+    scenario: 'Scenario execution',
+    evidence: 'Evidence collection',
+    cleanup: 'Cleanup',
+    finished: 'Finished',
+  }[stage]
+}
+
 export const ResultBody = z
   .object({
     queueId: DbId,
@@ -337,6 +444,7 @@ export const ResultBody = z
     status: z.enum(['passed', 'failed']),
     durationMs: z.number().int().nonnegative().max(INT4_MAX),
     error: z.string().optional(),
+    diagnostics: AttemptDiagnostics.optional(),
     screenshot: z.base64().optional(), // PNG, as WebdriverIO's takeScreenshot() returns it
     log: z.string().optional(),
     cleanupComplete: z.boolean().optional(),
@@ -478,6 +586,8 @@ export const Attempt = z.object({
   error: z.string().nullable(),
   inputRuntime: InputRuntime.nullable().default(null),
   inputsVerified: z.boolean().default(false),
+  progress: AttemptProgress.nullable().default(null),
+  diagnostics: z.boolean().default(false),
   screenshot: z.boolean(), // a file is saved; get it from the dashboard files route
   log: z.boolean(),
   ...AttemptOrigin.shape,

@@ -124,5 +124,6 @@ export const openRun = (answer: unknown) => {
 
 export const duration = (ms: number | null) => (ms === null ? '-' : formatDuration(ms))
 
-export const time = (date: Date | null) =>
-  date ? date.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' }) : '-'
+const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' })
+export const time = (date: Date | string | null) =>
+  date ? dateTime.format(typeof date === 'string' ? Date.parse(date) : date) : '-'
