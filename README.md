@@ -32,19 +32,24 @@ There are two tokens:
 - `RUNNER_TOKEN`: the runner. It can call every route.
 - `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
 
-| Route                    | Who calls it | What it does                                                       |
-| ------------------------ | ------------ | ------------------------------------------------------------------ |
-| `POST /runs`             | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
-| `GET /runs/:id`          | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
-| `PUT /devices`           | you          | Add or change a phone (runner token)                               |
-| `GET /devices?host=`     | runner       | The phones plugged into one machine                                |
-| `POST /devices/contact`  | runner       | Report that one device worker is still connected                   |
-| `PUT /catalog`           | runner       | Send its scenario list and their git commit (at startup)           |
-| `GET /catalog/revisions` | runner       | Page revisions referenced by running work or unconfirmed cleanup   |
-| `POST /lease`            | runner       | Take the next scenario. Waits up to 30s if there is none           |
-| `POST /heartbeat`        | runner       | Keep a lease alive while a scenario runs                           |
-| `POST /release`          | runner       | Confirm stopped execution and release a cleanup reservation        |
-| `POST /results`          | runner       | Report pass or fail, with a screenshot and a log                   |
+| Route                      | Who calls it | What it does                                                       |
+| -------------------------- | ------------ | ------------------------------------------------------------------ |
+| `POST /runs`               | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
+| `GET /runs/:id`            | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
+| `PUT /devices`             | you          | Add or change a phone (runner token)                               |
+| `GET /devices?host=`       | runner       | The phones plugged into one machine                                |
+| `POST /devices/contact`    | runner       | Report that one device worker is still connected                   |
+| `PUT /catalog`             | runner       | Send its scenario list and their git commit (at startup)           |
+| `GET /catalog/revisions`   | runner       | Page revisions referenced by running work or unconfirmed cleanup   |
+| `POST /lease`              | runner       | Take the next scenario. Waits up to 30s if there is none           |
+| `POST /heartbeat`          | runner       | Keep a lease alive while a scenario runs                           |
+| `POST /release`            | runner       | Confirm stopped execution and release a cleanup reservation        |
+| `POST /fixtures/register`  | runner       | Journal a scoped fixture before provisioning                       |
+| `POST /fixtures/claim`     | runner       | Claim one eligible cleanup with a reservation                      |
+| `POST /fixtures/finish`    | runner       | Report verified cleanup and executor termination                   |
+| `GET /fixtures`            | runner       | Page pending resources or an attempt's retained history            |
+| `POST /fixtures/:id/retry` | runner       | Confirm stopped execution and request cleanup again                |
+| `POST /results`            | runner       | Report pass or fail, with a screenshot and a log                   |
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
 back to the queue. A run is stuck when no phone of its platform has taken or finished any work for
@@ -609,3 +614,90 @@ show app content.
 Bundles use the same disk/S3 store, dashboard authentication and `ARTIFACT_DAYS` cleanup as other
 artifacts. Collection, progress publication, or upload failure cannot change a test verdict.
 Upgrade the server before runners to enable progress and bundle persistence.
+
+### Managed backend fixtures
+
+App reset clears app data; backend cleanup is an opt-in scenario contract. Existing scenarios
+and `context.signal` keep working. Declare fixtures on the scenario and acquire them through
+`context.use(fixture)`. Repeated use of the same declared fixture shares one setup promise and
+value within that attempt. `context.attemptId` identifies the attempt.
+
+```ts
+import type { Fixture, Scenario } from '@nowait-qa/sdk'
+import { backend } from './helpers/backend.ts' // your configured backend client
+
+const cart: Fixture<{ id: string }> = {
+  name: 'cart',
+  setup: ({ key, attemptId, account, signal }) =>
+    backend.provisionCart({ key, attemptId, account, signal }),
+  async cleanup(context) {
+    await backend.fenceAndDeleteCart(context)
+    return backend.cartIsAbsent(context) // true only after verification
+  },
+}
+
+export default {
+  id: 'cart.checkout',
+  platforms: ['android', 'ios'],
+  fixtures: [cart],
+  async run(driver, account, context) {
+    const value = await context.use(cart)
+    // Exercise the app against value.id. The parent manages cleanup afterward.
+  },
+} satisfies Scenario
+```
+
+The backend methods above illustrate the adapter contract; supply them in the scenario repo.
+Both operations receive `{ key, attemptId, account, signal }`. The framework generates a unique
+opaque idempotency key and commits its cleanup record **before** setup can contact the backend.
+Setup may return any local value; that value never enters the journal or cleanup process.
+Names are public identifiers: a letter followed by up to 63 letters, digits, dots, underscores or
+hyphens. An attempt can register at most 20 fixtures.
+
+Cleanup runs in a fresh process using the pinned, verified scenario code. It must find all its
+resources by the supplied key, including partial setup and a lost setup response. Keep cleanup
+independent of setup return values and mutable module variables. It must be idempotent and must
+fence that key against late backend work before verifying absence. Stopping JavaScript cannot
+undo an already accepted backend operation. When the backend cannot establish this guarantee,
+return `false` or throw: the account stays quarantined. Keys identify resources; they are not
+backend authentication credentials. Use the supplied account or your configured backend client.
+
+Fixtures clean up in reverse registration order after the original executor stops, command
+traffic is fenced, the parent acknowledges its session reservation and the attempt result is saved. A later unverified fixture blocks earlier
+fixtures of that attempt; unrelated attempts can continue. Setup and cleanup have a fixed 30-second
+ceiling, shortened by the recorded `SCENARIO_TIMEOUT_SECONDS`. Cleanup uses that attempt's saved
+configuration, including after a runner restart. The normal scenario deadline still bounds the
+whole scenario body. Source preparation and process termination are also bounded by a cleanup
+claim with time reserved for stopping the child and acknowledging the result.
+
+The assertion verdict is preserved separately from cleanup health. A passed scenario can have
+quarantined fixtures; its account remains unavailable until every registered resource is verified
+clean. A failed but confirmed-stopped cleanup releases the phone for other clean accounts. The
+server retries eligible cleanup at most `MAX_FIXTURE_CLEANUP_ATTEMPTS` times (default 3, maximum 10),
+with at least `FIXTURE_RETRY_SECONDS` between attempts (default 60). An eligible runner for the
+registered device performs reconciliation; disabled/offline devices may need their runner enabled
+or restored first. Pending cleanup retains the exact scenario revision across cache refresh and
+runner restart.
+
+A cleanup child owns a reservation too. An expired claim or lost parent does not prove that the
+old executor or accepted backend work stopped, so neither a timer nor ordinary cleanup
+acknowledgement can recycle that uncertain state. The **Fixtures** page shows pending, cleaning,
+quarantined and retained clean resources. Run pages link to an attempt's fixture history and keep
+refreshing while cleanup is pending. The Phones page distinguishes active fixture cleanup from an
+unconfirmed reservation. After the claim window ends, **Retry cleanup** requires explicit operator
+confirmation that the old runner, scenario/cleanup processes, Appium session and accepted backend
+operations have stopped. It schedules verified cleanup; it does not declare an account clean.
+Runner logs identify the cleanup process group and resource record for investigation.
+
+Resource records contain only opaque keys, public names and lifecycle metadata, never passwords,
+backend URLs or setup return values. Lists are paged 50 at a time. Verified-clean records expire
+after `ARTIFACT_DAYS` through a bounded database job; uncertain records remain to protect their
+resources and accounts. Diagnostic downloads link to the corresponding fixture records.
+
+The runner API provides `POST /fixtures/register`, `/fixtures/claim`, `/fixtures/finish`,
+`GET /fixtures?after=...&queueId=...` and `POST /fixtures/:id/retry`. Dashboard reads/actions use
+`/dashboard/api/fixtures` with the existing authentication and action-header rules. Trigger tokens
+cannot manage fixtures. Retry requires `{ "confirmedStopped": true }`; finish requires the current
+opaque claim and confirmed child termination before accepting verified cleanup. Upgrade the
+server and all relevant runners before adopting fixtures; old servers still support ordinary scenarios, and managed setup
+fails explicitly before provisioning when the fixture protocol is absent.

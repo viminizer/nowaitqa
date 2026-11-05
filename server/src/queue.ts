@@ -1,5 +1,6 @@
 // All queue logic lives here (R6): creating runs, leasing, heartbeats, results, expiry and retries.
 
+import { randomUUID } from 'node:crypto'
 import {
   type Attempt,
   type AttemptOrigin,
@@ -8,10 +9,19 @@ import {
   type CreateRunBody,
   countStatuses,
   type ExecutionProfile,
+  FIXTURE_CLAIM_SECONDS,
+  type FixtureClaimBody,
+  type FixtureFinishBody,
+  type FixtureJob,
+  type FixturePage,
+  type FixtureReason,
+  type FixtureRegisterBody,
+  type FixtureState,
   FullCommit,
   InputRuntime,
   inputSource,
   type Lease,
+  MAX_ATTEMPT_FIXTURES,
   matchesProfile,
   messageOf,
   type ProgressBody,
@@ -35,17 +45,35 @@ import {
   isNull,
   like,
   lt,
+  lte,
   ne,
   or,
   sql,
 } from 'drizzle-orm'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
-import { accounts, catalogs, devices, queue, results, runs } from './db/schema.ts'
+import { accounts, catalogs, devices, fixtureResources, queue, results, runs } from './db/schema.ts'
 import { saveArtifact } from './storage/index.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type QueueRow = typeof queue.$inferSelect
+const fixtureState = sql<FixtureState>`case
+  when ${fixtureResources.claim} is not null and ${fixtureResources.claimUntil} <= now()
+    then 'quarantined'
+  when ${queue.status} = 'done' and ${queue.cleanupPending} and ${fixtureResources.status} = 'pending'
+    and not exists (select 1 from ${fixtureResources} owner where owner.queue_id = ${queue.id} and owner.claim is not null)
+    then 'quarantined'
+  else ${fixtureResources.status} end`
+const fixtureReason = sql<FixtureReason | null>`case
+  when ${fixtureResources.claim} is not null and ${fixtureResources.claimUntil} <= now()
+    then 'cleanup_owner_lost'
+  when ${queue.status} = 'done' and ${queue.cleanupPending} and ${fixtureResources.status} = 'pending'
+    and not exists (select 1 from ${fixtureResources} owner where owner.queue_id = ${queue.id} and owner.claim is not null)
+    then 'execution_unconfirmed'
+  when ${fixtureResources.status} = 'pending' and exists (select 1 from ${fixtureResources} later
+    where later.queue_id = ${queue.id} and later.id > ${fixtureResources.id} and later.status <> 'cleaned')
+    then 'cleanup_dependency'
+  else ${fixtureResources.reason} end`
 
 // --- waking long-polling workers -------------------------------------------------------------
 // ponytail: in-memory signal, works for one server process. Use Postgres LISTEN/NOTIFY if we
@@ -93,12 +121,20 @@ export async function referencedRevisions(after = 0) {
   const found = await db.execute<{ id: number; commit: string; cleanupPending: boolean }>(sql`
     SELECT r.id, r.commit, EXISTS (
       SELECT 1 FROM ${queue} q WHERE q.run_id = r.id AND q.cleanup_pending
+    ) OR EXISTS (
+      SELECT 1 FROM ${fixtureResources} f JOIN ${queue} q ON q.id = f.queue_id
+      WHERE q.run_id = r.id AND f.status <> 'cleaned'
     ) AS "cleanupPending"
     FROM ${runs} r WHERE r.status = 'running' AND r.id > ${after}
     UNION
     SELECT r.id, r.commit, true AS "cleanupPending"
     FROM ${queue} q JOIN ${runs} r ON r.id = q.run_id
     WHERE q.cleanup_pending AND r.id > ${after}
+    UNION
+    SELECT r.id, r.commit, true AS "cleanupPending"
+    FROM ${fixtureResources} f JOIN ${queue} q ON q.id = f.queue_id
+    JOIN ${runs} r ON r.id = q.run_id
+    WHERE f.status <> 'cleaned' AND r.id > ${after}
     ORDER BY id LIMIT ${limit + 1}`)
   const rows = found.rows.slice(0, limit)
   return {
@@ -514,6 +550,11 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
       screenshot: results.screenshot,
       diagnostics: sql<boolean>`${results.diagnostics} IS NOT NULL`,
       progress: queue.progress,
+      fixtureCleanup: sql<Attempt['fixtureCleanup']>`(select case
+        when count(*) = 0 then 'none'
+        when bool_or((${fixtureState}) = 'quarantined') then 'quarantined'
+        when bool_or(${fixtureResources.status} <> 'cleaned') then 'pending'
+        else 'cleaned' end from ${fixtureResources} where ${fixtureResources.queueId} = ${queue.id})`,
       log: results.log,
       phase: sql<
         AttemptOrigin['phase']
@@ -677,6 +718,7 @@ export async function leaseNext(
       expectedInputs: row.run.resolvedInputs ?? row.run.expectedInputs,
       profile: leased.profile,
       profileProtocol: 1 as const,
+      fixtureProtocol: 1 as const,
       deviceIdentity: {
         udid: device.udid,
         platform: device.platform,
@@ -714,9 +756,11 @@ export async function leaseNext(
 async function takeAccount(tx: Tx, queueId: number): Promise<string | null | false> {
   const free = await tx.execute<{ username: string }>(sql`
     SELECT a.username FROM ${accounts} a
-    WHERE a.queue_id IS NULL
+    WHERE (a.queue_id IS NULL
        OR NOT EXISTS (SELECT 1 FROM ${queue} q WHERE q.id = a.queue_id
-         AND (q.status = 'leased' OR q.cleanup_pending))
+         AND (q.status = 'leased' OR q.cleanup_pending)))
+      AND NOT EXISTS (SELECT 1 FROM ${fixtureResources} f
+        WHERE f.queue_id = a.queue_id AND f.status <> 'cleaned')
     LIMIT 1 FOR UPDATE SKIP LOCKED`)
   const username = free.rows[0]?.username
   if (!username) {
@@ -751,7 +795,13 @@ export async function releaseLease(queueId: number, device: string) {
   const changed = await db
     .update(queue)
     .set({ cleanupPending: false })
-    .where(and(eq(queue.id, queueId), eq(queue.device, device)))
+    .where(
+      and(
+        eq(queue.id, queueId),
+        eq(queue.device, device),
+        sql`not exists (select 1 from ${fixtureResources} f where f.queue_id = ${queue.id} and f.claim is not null)`,
+      ),
+    )
     .returning({ id: queue.id })
   if (changed.length > 0) notifyWork()
   return changed.length > 0
@@ -1399,4 +1449,301 @@ async function finishRunIfDone(tx: Tx, runId: number) {
     .update(runs)
     .set({ status: failed.rows.length > 0 ? 'failed' : 'passed', finishedAt: sql`now()` })
     .where(eq(runs.id, runId))
+}
+
+export class FixtureConflictError extends Error {}
+
+// Commit the recovery identity before the child may call a backend. No setup result is stored.
+export async function registerFixture(body: FixtureRegisterBody) {
+  return db.transaction(async (tx) => {
+    const [item] = await tx
+      .select({ item: queue, resolved: runs.resolvedInputs })
+      .from(queue)
+      .innerJoin(runs, eq(runs.id, queue.runId))
+      .where(
+        and(
+          eq(queue.id, body.queueId),
+          eq(queue.device, body.device),
+          eq(queue.status, 'leased'),
+          eq(queue.cleanupPending, true),
+          eq(queue.inputsVerified, true),
+          sql`${queue.leaseUntil} > now()`,
+          sql`(${queue.profile} is null or ${queue.inputRuntime} is not null)`,
+        ),
+      )
+      .for('update', { of: queue })
+    if (!item?.resolved)
+      throw new FixtureConflictError(
+        'fixture setup needs an active, verified attempt before cleanup acknowledgement',
+      )
+    const existing = await tx
+      .select({ name: fixtureResources.name, key: fixtureResources.key })
+      .from(fixtureResources)
+      .where(eq(fixtureResources.queueId, body.queueId))
+      .limit(MAX_ATTEMPT_FIXTURES)
+    const same = existing.find((record) => record.name === body.name)
+    if (same) return { key: same.key }
+    if (existing.length >= MAX_ATTEMPT_FIXTURES)
+      throw new FixtureConflictError(`at most ${MAX_ATTEMPT_FIXTURES} fixtures per attempt`)
+    const [record] = await tx
+      .insert(fixtureResources)
+      .values({ queueId: body.queueId, name: body.name, key: randomUUID() })
+      .returning({ key: fixtureResources.key })
+    if (!record) throw new Error('fixture registration returned nothing')
+    return record
+  })
+}
+
+// Same device→queue lock order as ordinary leases. A cleanup child owns a device hold too:
+// losing its parent must never be mistaken for proof that arbitrary adapter code has stopped.
+export async function claimFixture(body: FixtureClaimBody): Promise<FixtureJob | null> {
+  return db.transaction(async (tx) => {
+    const [phone] = await tx
+      .select()
+      .from(devices)
+      .where(
+        and(
+          eq(devices.name, body.name),
+          eq(devices.host, body.host),
+          eq(devices.udid, body.udid),
+          eq(devices.platform, body.platform),
+        ),
+      )
+      .for('no key update')
+    if (!phone) return null
+    const [busy] = await tx
+      .select({ id: queue.id })
+      .from(queue)
+      .where(
+        and(
+          eq(queue.device, body.name),
+          or(eq(queue.status, 'leased'), eq(queue.cleanupPending, true)),
+        ),
+      )
+      .limit(1)
+    if (busy) return null
+    const [found] = await tx
+      .select({ resource: fixtureResources, item: queue, run: runs })
+      .from(fixtureResources)
+      .innerJoin(queue, eq(queue.id, fixtureResources.queueId))
+      .innerJoin(runs, eq(runs.id, queue.runId))
+      .where(
+        and(
+          eq(queue.device, body.name),
+          eq(queue.status, 'done'),
+          eq(queue.cleanupPending, false),
+          ne(fixtureResources.status, 'cleaned'),
+          isNull(fixtureResources.claim),
+          lt(fixtureResources.attempts, config.MAX_FIXTURE_CLEANUP_ATTEMPTS),
+          lte(fixtureResources.nextAttemptAt, sql`now()`),
+          sql`not exists (select 1 from ${fixtureResources} later where later.queue_id = ${queue.id}
+          and later.id > ${fixtureResources.id} and later.status <> 'cleaned')`,
+        ),
+      )
+      .orderBy(asc(fixtureResources.id))
+      .limit(1)
+      .for('update', { of: queue, skipLocked: true })
+    if (!found?.run.resolvedInputs) return null
+    const claim = randomUUID()
+    await tx.update(queue).set({ cleanupPending: true }).where(eq(queue.id, found.item.id))
+    await tx
+      .update(fixtureResources)
+      .set({
+        claim,
+        status: 'cleaning',
+        reason: null,
+        attempts: found.resource.attempts + 1,
+        claimUntil: sql`now() + ${FIXTURE_CLAIM_SECONDS} * interval '1 second'`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(fixtureResources.id, found.resource.id))
+    const [account] = await tx
+      .select({ username: accounts.username })
+      .from(accounts)
+      .where(eq(accounts.queueId, found.item.id))
+      .limit(1)
+    return {
+      id: found.resource.id,
+      key: found.resource.key,
+      name: found.resource.name,
+      claim,
+      queueId: found.item.id,
+      runId: found.run.id,
+      commit: found.run.commit,
+      scenarioId: found.item.scenarioId,
+      scenarios: ResolvedInputs.parse(found.run.resolvedInputs).scenarios,
+      config: ResolvedInputs.parse(found.run.resolvedInputs).config,
+      account: account?.username ?? null,
+    }
+  })
+}
+
+export async function finishFixture(body: FixtureFinishBody) {
+  const saved = await db.transaction(async (tx) => {
+    await tx
+      .select({ name: devices.name })
+      .from(devices)
+      .where(eq(devices.name, body.device))
+      .for('no key update')
+    const [found] = await tx
+      .select({ item: queue, resource: fixtureResources })
+      .from(queue)
+      .innerJoin(fixtureResources, eq(fixtureResources.queueId, queue.id))
+      .where(
+        and(
+          eq(fixtureResources.id, body.id),
+          eq(queue.device, body.device),
+          eq(queue.status, 'done'),
+          eq(fixtureResources.claim, body.claim),
+          eq(fixtureResources.status, 'cleaning'),
+          sql`${fixtureResources.claimUntil} > now()`,
+        ),
+      )
+      .for('update', { of: queue })
+    if (!found) return false
+    await tx
+      .update(fixtureResources)
+      .set({
+        status: body.clean ? 'cleaned' : 'quarantined',
+        reason: body.clean
+          ? null
+          : body.stopped
+            ? (body.reason ?? 'cleanup_failed')
+            : 'executor_unconfirmed',
+        ...(body.stopped ? { claim: null, claimUntil: null } : {}),
+        nextAttemptAt: sql`now() + ${config.FIXTURE_RETRY_SECONDS} * interval '1 second'`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(fixtureResources.id, body.id))
+    if (body.stopped)
+      await tx.update(queue).set({ cleanupPending: false }).where(eq(queue.id, found.item.id))
+    if (!body.clean) {
+      const note = 'Fixture cleanup was not verified; see Fixtures for current state.'
+      await tx
+        .update(results)
+        .set({
+          error: sql`case when position(${note} in coalesce(${results.error}, '')) > 0
+        then ${results.error} else concat_ws(E'\n', nullif(${results.error}, ''), ${note}::text) end`,
+        })
+        .where(eq(results.queueId, found.item.id))
+    }
+    return true
+  })
+  if (saved) notifyWork()
+  return saved
+}
+
+// Global view shows resources still requiring cleanup; an attempt view includes retained clean
+// records too. Both use the same bounded keyset page, never a growing per-run array.
+export async function listFixtures(after?: number, queueId?: number): Promise<FixturePage> {
+  const rows = await db
+    .select({
+      id: fixtureResources.id,
+      key: fixtureResources.key,
+      name: fixtureResources.name,
+      queueId: queue.id,
+      runId: queue.runId,
+      scenarioId: queue.scenarioId,
+      device: queue.device,
+      status: fixtureState,
+      reason: fixtureReason,
+      attempts: fixtureResources.attempts,
+      updatedAt: fixtureResources.updatedAt,
+      canRetry: sql<boolean>`${queue.status} = 'done' and ${fixtureResources.status} <> 'cleaned'
+      and not exists (select 1 from ${fixtureResources} active where active.queue_id = ${queue.id}
+        and active.claim is not null and active.claim_until > now())
+      and not exists (select 1 from ${fixtureResources} later where later.queue_id = ${queue.id}
+        and later.id > ${fixtureResources.id} and later.status <> 'cleaned')`,
+      accountHeld: sql<boolean>`exists(select 1 from ${accounts} a where a.queue_id = ${queue.id}) and ${fixtureResources.status} <> 'cleaned'`,
+    })
+    .from(fixtureResources)
+    .innerJoin(queue, eq(queue.id, fixtureResources.queueId))
+    .where(
+      and(
+        after ? lt(fixtureResources.id, after) : undefined,
+        queueId ? eq(queue.id, queueId) : ne(fixtureResources.status, 'cleaned'),
+      ),
+    )
+    .orderBy(desc(fixtureResources.id))
+    .limit(51)
+  return { fixtures: rows.slice(0, 50), next: rows.length > 50 ? (rows[49]?.id ?? null) : null }
+}
+
+// An explicit operator confirmation, never an inference from an expired lease/claim. It covers
+// original executor/session processes AND cleanup children plus accepted backend requests.
+export async function retryFixture(id: number) {
+  await db.transaction(async (tx) => {
+    const [resource] = await tx
+      .select({ item: queue })
+      .from(fixtureResources)
+      .innerJoin(queue, eq(queue.id, fixtureResources.queueId))
+      .where(eq(fixtureResources.id, id))
+      .limit(1)
+    if (!resource?.item.device) throw new BadRunError('fixture not found')
+    await tx
+      .select({ name: devices.name })
+      .from(devices)
+      .where(eq(devices.name, resource.item.device))
+      .for('no key update')
+    const [found] = await tx
+      .select({
+        item: queue,
+        resource: fixtureResources,
+        canReset: sql<boolean>`not exists (select 1 from ${fixtureResources} active where active.queue_id = ${queue.id}
+          and active.claim is not null and active.claim_until > now())
+      and not exists (select 1 from ${fixtureResources} later where later.queue_id = ${queue.id}
+        and later.id > ${fixtureResources.id} and later.status <> 'cleaned')`,
+      })
+      .from(queue)
+      .innerJoin(fixtureResources, eq(fixtureResources.queueId, queue.id))
+      .where(eq(fixtureResources.id, id))
+      .for('update', { of: queue })
+    if (found?.item.status !== 'done' || found.resource.status === 'cleaned' || !found.canReset)
+      throw new BadRunError(
+        'cleanup is active, the attempt is unfinished, a later fixture needs cleanup, or the resource is already clean',
+      )
+    await tx
+      .update(fixtureResources)
+      .set({
+        status: 'pending',
+        reason: 'awaiting_cleanup',
+        claim: null,
+        claimUntil: null,
+        attempts: 0,
+        nextAttemptAt: sql`now()`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(fixtureResources.id, id))
+    await tx.update(queue).set({ cleanupPending: false }).where(eq(queue.id, found.item.id))
+  })
+  notifyWork()
+}
+
+// Retain uncertain resources indefinitely; deleting their evidence would recycle dirty accounts.
+// Verified-clean identities use the existing artifact retention duration and bounded DB batches.
+export async function deleteOldFixtureRecords() {
+  for (;;) {
+    const old = await db
+      .select({ id: fixtureResources.id })
+      .from(fixtureResources)
+      .where(
+        and(
+          eq(fixtureResources.status, 'cleaned'),
+          lt(fixtureResources.updatedAt, sql`now() - ${config.ARTIFACT_DAYS} * interval '1 day'`),
+        ),
+      )
+      .orderBy(asc(fixtureResources.id))
+      .limit(1000)
+    if (!old.length) return
+    await db.delete(fixtureResources).where(
+      and(
+        inArray(
+          fixtureResources.id,
+          old.map((r) => r.id),
+        ),
+        eq(fixtureResources.status, 'cleaned'),
+      ),
+    )
+    if (old.length < 1000) return
+  }
 }

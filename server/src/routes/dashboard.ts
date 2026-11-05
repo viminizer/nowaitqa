@@ -13,6 +13,7 @@ import {
   DeviceEnabledBody,
   DeviceList,
   DiagnosticDownload,
+  type FixtureState,
   ManifestPage,
   ManifestQuery,
   RunAgainBody,
@@ -25,7 +26,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { config } from '../config.ts'
 import { db } from '../db/index.ts'
-import { devices, queue, results, runs } from '../db/schema.ts'
+import { devices, fixtureResources, queue, results, runs } from '../db/schema.ts'
 import { BadDeviceError, registerDevice } from '../devices.ts'
 import {
   BadRunError,
@@ -125,6 +126,10 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
           queueId: queue.id,
           status: queue.status,
           cleanupPending: queue.cleanupPending,
+          fixtureState: sql<FixtureState | null>`(select case
+            when bool_or(f.status = 'quarantined' or f.claim_until <= now()) then 'quarantined'
+            when count(*) > 0 then 'cleaning' end
+            from ${fixtureResources} f where f.queue_id = ${queue}.id and f.claim is not null)`,
         })
         .from(queue)
         .where(sql`${queue.status} = 'leased' or ${queue.cleanupPending}`),
@@ -139,7 +144,12 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
           ...phone,
           busy: busy ? { runId: busy.runId, scenarioId: busy.scenarioId } : null,
           cleanup: cleanup
-            ? { queueId: cleanup.queueId, runId: cleanup.runId, scenarioId: cleanup.scenarioId }
+            ? {
+                queueId: cleanup.queueId,
+                runId: cleanup.runId,
+                scenarioId: cleanup.scenarioId,
+                fixtureState: cleanup.fixtureState,
+              }
             : null,
         }
       }),
@@ -181,6 +191,7 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
       return reply
         .header('content-disposition', `attachment; filename="attempt-${item.id}-diagnostics.json"`)
         .send({
+          fixtures: `/dashboard/api/fixtures?queueId=${item.id}`,
           commit: run?.commit ?? 'unknown',
           inputs: {
             resolved: run?.resolvedInputs ?? null,

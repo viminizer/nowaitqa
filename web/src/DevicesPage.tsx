@@ -178,13 +178,26 @@ export function DevicesPage() {
                       <td className="device-state">
                         {d.cleanup ? (
                           <>
-                            <Status status="failed" />
+                            <Status status={d.cleanup.fixtureState ?? 'failed'} />
                             <p>
-                              Cleanup required for{' '}
+                              {d.cleanup.fixtureState === 'cleaning'
+                                ? 'Fixture cleanup in progress for '
+                                : 'Cleanup required for '}
                               <a href={`#/runs/${d.cleanup.runId}`}>#{d.cleanup.runId}</a>, attempt{' '}
-                              {d.cleanup.queueId}. Verify the stopped runner and Appium session
-                              before releasing this device.
+                              {d.cleanup.queueId}.
                             </p>
+                            {d.cleanup.fixtureState ? (
+                              <p>
+                                <a href={`#/fixtures?queueId=${d.cleanup.queueId}`}>
+                                  Review fixture cleanup and recovery
+                                </a>
+                              </p>
+                            ) : (
+                              <p>
+                                Verify the stopped runner and Appium session before releasing this
+                                device.
+                              </p>
+                            )}
                           </>
                         ) : !d.enabled ? (
                           <Status status="disabled" />

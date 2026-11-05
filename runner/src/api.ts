@@ -7,6 +7,10 @@ import {
   DEVICE_CONTACT_TIMEOUT_MS,
   Device,
   DevicePause,
+  type FixtureFinishBody,
+  FixtureJob,
+  FixtureKey,
+  type FixtureRegisterBody,
   type InputRuntime,
   Lease,
   messageOf,
@@ -235,4 +239,39 @@ export async function sendResult(result: ResultBody) {
       await sleep(2 ** tries * 1000) // 2, 4, 8 s
     }
   }
+}
+
+export async function registerFixture(body: FixtureRegisterBody, signal: AbortSignal) {
+  const res = await call('POST', '/fixtures/register', [200], body, 5_000, signal)
+  return FixtureKey.parse(await res.json())
+}
+let notedMissingFixtureApi = false
+export async function claimFixture(device: Device, signal: AbortSignal) {
+  try {
+    const res = await call(
+      'POST',
+      '/fixtures/claim',
+      [200, 204],
+      { name: device.name, host: device.host, platform: device.platform, udid: device.udid },
+      10_000,
+      signal,
+    )
+    return res.status === 204 ? null : FixtureJob.parse(await res.json())
+  } catch (err) {
+    if (!(err instanceof HttpError) || err.status !== 404) throw err
+    // Old servers have no fixture queue; ordinary scenarios keep working. Retry on later
+    // iterations so a live server upgrade enables reconciliation without a runner restart.
+    if (!notedMissingFixtureApi) {
+      notedMissingFixtureApi = true
+      log(
+        config.HOST,
+        'managed fixtures unavailable on the current server; ordinary scenarios remain supported',
+      )
+    }
+    return null
+  }
+}
+export async function finishFixture(body: FixtureFinishBody) {
+  const res = await call('POST', '/fixtures/finish', [204, 409], body, 10_000)
+  return res.status === 204
 }

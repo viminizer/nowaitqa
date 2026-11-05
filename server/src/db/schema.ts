@@ -3,6 +3,8 @@ import type {
   AttemptProgress,
   Catalog,
   ExecutionProfile,
+  FixtureReason,
+  FixtureState,
   InputRuntime,
   RecoveryAction,
   ResolvedInputs,
@@ -19,6 +21,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 export const devices = pgTable('devices', {
@@ -179,3 +182,29 @@ export const accounts = pgTable('accounts', {
   username: text().primaryKey(),
   queueId: integer().references(() => queue.id),
 })
+
+// Write-ahead resource identities only; no setup values, credentials or backend locators.
+export const fixtureResources = pgTable(
+  'fixture_resources',
+  {
+    id: serial().primaryKey(),
+    queueId: integer()
+      .notNull()
+      .references(() => queue.id),
+    key: text().notNull().unique(),
+    name: text().notNull(),
+    status: text().$type<FixtureState>().notNull().default('pending'),
+    reason: text().$type<FixtureReason>().default('awaiting_cleanup'),
+    attempts: integer().notNull().default(0),
+    claim: text(),
+    claimUntil: timestamp({ withTimezone: true }),
+    nextAttemptAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('fixture_attempt_name_idx').on(t.queueId, t.name),
+    index('fixture_open_idx').on(t.id).where(sql`status <> 'cleaned'`),
+    index('fixture_pending_idx').on(t.nextAttemptAt, t.id).where(sql`status <> 'cleaned'`),
+    index('fixture_retention_idx').on(t.updatedAt, t.id).where(sql`status = 'cleaned'`),
+  ],
+)
