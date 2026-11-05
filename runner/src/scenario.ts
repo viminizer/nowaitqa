@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import type { Device, FailureKind, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
 import type { AppiumGate } from './appium-gate.ts'
-import { findScenarioFile } from './catalog.ts'
 import { config } from './config.ts'
 import type { LeaseGuard } from './lease-guard.ts'
 import { log } from './log.ts'
@@ -74,6 +73,7 @@ export async function runScenario(
   guard: LeaseGuard,
   gate: AppiumGate,
   headers: Record<string, string>,
+  file: string,
 ) {
   const started = performance.now()
   const signal = guard.signal
@@ -90,11 +90,6 @@ export async function runScenario(
   let outcome: ScenarioOutcome
   try {
     signal.throwIfAborted()
-    const file = findScenarioFile(lease.commit, lease.scenarioId)
-    if (!file)
-      throw new Error(
-        `scenario ${lease.scenarioId} at commit ${lease.commit} is not on this runner`,
-      )
     if (lease.account && !config.TEST_ACCOUNT_PASSWORD)
       throw new Error('TEST_ACCOUNT_PASSWORD is not set')
     log(device.name, `run ${lease.runId}: ${lease.scenarioId} (attempt ${lease.attempt})`)

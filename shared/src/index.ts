@@ -68,6 +68,13 @@ export type DeviceConnectivity = z.infer<typeof DeviceConnectivity>
 
 // A git commit, full or short. Hex only, so it is safe in a LIKE pattern.
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
+export const FullCommit = Commit.length(40)
+
+export const RevisionQuery = z.object({ after: DbIdParam.optional() })
+export const RevisionPage = z.object({
+  revisions: z.array(z.object({ runId: DbId, commit: Commit, cleanupPending: z.boolean() })),
+  next: DbId.nullable(),
+})
 
 // The scenarios a runner has, and the git commit of its scenario folder. Sent when it starts.
 export const Catalog = z.object({
@@ -94,8 +101,7 @@ export const CreateRunBody = z.object({
 })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
-// commits: the runner's scenario commits (newest, and the one before a pull); the phone only gets
-// work from runs on them.
+// commits: the runner's pinned, ready scenario revisions; the phone only gets work on them.
 // runId: the run the phone has a session for. That run's work comes first, so the phone does not
 // switch apps back and forth between runs.
 export const LeaseBody = z.object({

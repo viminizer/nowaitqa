@@ -32,18 +32,19 @@ There are two tokens:
 - `RUNNER_TOKEN`: the runner. It can call every route.
 - `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
 
-| Route                   | Who calls it | What it does                                                       |
-| ----------------------- | ------------ | ------------------------------------------------------------------ |
-| `POST /runs`            | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
-| `GET /runs/:id`         | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
-| `PUT /devices`          | you          | Add or change a phone (runner token)                               |
-| `GET /devices?host=`    | runner       | The phones plugged into one machine                                |
-| `POST /devices/contact` | runner       | Report that one device worker is still connected                   |
-| `PUT /catalog`          | runner       | Send its scenario list and their git commit (at startup)           |
-| `POST /lease`           | runner       | Take the next scenario. Waits up to 30s if there is none           |
-| `POST /heartbeat`       | runner       | Keep a lease alive while a scenario runs                           |
-| `POST /release`         | runner       | Confirm stopped execution and release a cleanup reservation        |
-| `POST /results`         | runner       | Report pass or fail, with a screenshot and a log                   |
+| Route                    | Who calls it | What it does                                                       |
+| ------------------------ | ------------ | ------------------------------------------------------------------ |
+| `POST /runs`             | Jenkins      | Start a run: puts every scenario for the platform in the queue     |
+| `GET /runs/:id`          | anyone       | Run status, and each scenario as pending / passed / flaky / failed |
+| `PUT /devices`           | you          | Add or change a phone (runner token)                               |
+| `GET /devices?host=`     | runner       | The phones plugged into one machine                                |
+| `POST /devices/contact`  | runner       | Report that one device worker is still connected                   |
+| `PUT /catalog`           | runner       | Send its scenario list and their git commit (at startup)           |
+| `GET /catalog/revisions` | runner       | Page revisions referenced by running work or unconfirmed cleanup   |
+| `POST /lease`            | runner       | Take the next scenario. Waits up to 30s if there is none           |
+| `POST /heartbeat`        | runner       | Keep a lease alive while a scenario runs                           |
+| `POST /release`          | runner       | Confirm stopped execution and release a cleanup reservation        |
+| `POST /results`          | runner       | Report pass or fail, with a screenshot and a log                   |
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
 back to the queue. A run is stuck when no phone of its platform has taken or finished any work for
@@ -302,7 +303,35 @@ The runner reads `SCENARIOS_DIR` once, so restart it after you pull. Or let the 
 
 Every minute the runner fetches the branch. When it moved, the runner checks the new commit out
 into its own folder, runs `pnpm install` if it has a `pnpm-lock.yaml`, and sends the new list to
-the server. Runs started on the previous commit still finish.
+the server. Pending/running runs retain their exact revisions across later branch updates.
+
+The managed runner pages `GET /catalog/revisions` and restores required commits from its Git
+cache or origin, including after restart. Unconfirmed cleanup also retains its revision, even
+after the run closes. Lease requests pin their advertised revisions; the selected checkout stays
+pinned until executor exit is confirmed, protecting lazy imports. Restoring historical code does
+not republish its catalog or change the newest default. Missing commits and failed installs are
+reported with their revision in runner logs; ready versions continue serving work. No newer code
+is substituted. Upgrade the server first; a missing references endpoint stops managed startup
+with an upgrade message. Local folder mode keeps its existing read-once behavior.
+
+Use a separate managed `SCENARIOS_DIR` for each runner process. Ready checkouts contain a
+`.nowait-ready` identity marker so restart does not reinstall dependencies underneath retained
+execution. An existing unverified checkout with a cleanup hold is preserved and reported
+unavailable until cleanup is verified. Do not edit managed checkouts; put scenario changes in
+their source repo.
+
+`SCENARIO_CACHE_REVISIONS` defaults to 10 (range 2–100), and `SCENARIO_CACHE_BYTES` to 5 GiB
+(minimum 1 MiB). These are admission limits: referenced/pinned code is never deleted to force a
+limit. Unreferenced checkouts beyond the current and one warm previous head are reclaimed on
+polls, even if the branch did not move; capacity pressure can reclaim the warm head too. A full
+cache reports unavailability and delays admitting more versions until references finish or the
+budget is increased. Existing ready references can drain after a budget reduction.
+
+Bytes cover the managed directory, including Git objects; pnpm's external shared store is managed
+separately. A single fetch/install can temporarily exceed the byte threshold; unsuccessful fresh
+checkouts are removed and further fetches pause while the cache remains over budget. This is not
+a filesystem quota. Active or uncertain files are retained, and reference-API outages never
+authorize eviction. Interrupted installs are retried without replacing a healthy catalog.
 
 One file per scenario, directly in the folder. The file name is the scenario id. Sub-folders
 (helpers) are not scenarios. Get the `Scenario` type from `@nowait-qa/sdk`, installed from GitHub

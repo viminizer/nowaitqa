@@ -53,6 +53,7 @@ export const runs = pgTable(
   (t) => [
     index('runs_finished_idx').on(t.finishedAt).where(sql`status <> 'running'`), // notifications
     index('runs_created_idx').on(t.createdAt), // artifact cleanup: runs older than ARTIFACT_DAYS
+    index('runs_active_idx').on(t.id).where(sql`status = 'running'`), // revision references
   ],
 )
 

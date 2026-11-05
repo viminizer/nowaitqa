@@ -7,6 +7,8 @@ import {
   Lease,
   LeaseBody,
   ResultBody,
+  RevisionPage,
+  RevisionQuery,
 } from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
@@ -14,6 +16,7 @@ import {
   heartbeat,
   leaseNext,
   PausedDeviceError,
+  referencedRevisions,
   releaseLease,
   saveCatalog,
   submitResult,
@@ -24,6 +27,11 @@ import {
 const LONG_POLL_MS = 30_000
 
 export const workRoutes: FastifyPluginAsyncZod = async (app) => {
+  app.get(
+    '/catalog/revisions',
+    { schema: { querystring: RevisionQuery, response: { 200: RevisionPage } } },
+    async (req) => referencedRevisions(req.query.after),
+  )
   // The runner's scenario list. The server never reads test files: runs are filled from this.
   app.put('/catalog', { schema: { body: Catalog } }, async (req, reply) => {
     await saveCatalog(req.body)
