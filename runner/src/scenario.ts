@@ -2,13 +2,14 @@
 import { type ChildProcess, fork } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
-import type { Device, Lease, ResultBody } from '@nowait/shared'
+import type { Device, FailureKind, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
 import type { AppiumGate } from './appium-gate.ts'
 import { findScenarioFile } from './catalog.ts'
 import { config } from './config.ts'
+import type { LeaseGuard } from './lease-guard.ts'
 import { log } from './log.ts'
-import { ScenarioOutcome, ScenarioReady } from './scenario-protocol.ts'
+import { ScenarioOutcome, ScenarioReady, ScenarioStarted } from './scenario-protocol.ts'
 
 const STOP_GRACE_MS = 250
 const STOP_LIMIT_MS = 5_000
@@ -70,11 +71,20 @@ export async function runScenario(
   driver: Browser,
   device: Device,
   lease: Lease,
-  signal: AbortSignal,
+  guard: LeaseGuard,
   gate: AppiumGate,
   headers: Record<string, string>,
 ) {
   const started = performance.now()
+  const signal = guard.signal
+  let scenarioStarted: boolean | null = false
+  const failure = (error: string, failureKind: FailureKind = 'unknown'): ScenarioOutcome => ({
+    status: 'failed',
+    error,
+    failureKind,
+    scenarioStarted,
+    phase: scenarioStarted === null ? 'unknown' : scenarioStarted ? 'scenario' : 'setup',
+  })
   let child: ChildProcess | undefined
   let exited = Promise.resolve()
   let outcome: ScenarioOutcome
@@ -110,9 +120,10 @@ export async function runScenario(
         gate.stopScenario()
         resolve(result)
       }
-      const abort = () => finish({ status: 'failed', error: String(signal.reason) })
+      const abort = () =>
+        finish(failure(String(signal.reason), guard.stopping ? 'cancelled' : 'lease_lost'))
       let timer = setTimeout(
-        () => finish({ status: 'failed', error: 'scenario executor startup timed out after 30s' }),
+        () => finish(failure('scenario executor startup timed out after 30s', 'executor_error')),
         30_000,
       )
       let ready = false
@@ -120,36 +131,35 @@ export async function runScenario(
       if (signal.aborted) abort()
       executor.on('message', (message) => {
         if (finished) return
+        if (ScenarioStarted.safeParse(message).success) {
+          scenarioStarted = true
+          guard.markStarted()
+          return
+        }
         if (ScenarioReady.safeParse(message).success) {
-          if (ready) return finish({ status: 'failed', error: 'duplicate scenario readiness' })
+          if (ready) return finish(failure('duplicate scenario readiness', 'executor_error'))
           ready = true
           clearTimeout(timer)
           timer = setTimeout(
-            () =>
-              finish({
-                status: 'failed',
-                error: `timed out after ${config.SCENARIO_TIMEOUT_SECONDS}s`,
-              }),
+            () => finish(failure(`timed out after ${config.SCENARIO_TIMEOUT_SECONDS}s`, 'timeout')),
             config.SCENARIO_TIMEOUT_SECONDS * 1000,
           )
           start()
           return
         }
         const parsed = ScenarioOutcome.safeParse(message)
-        finish(
-          parsed.success ? parsed.data : { status: 'failed', error: 'invalid scenario outcome' },
-        )
+        finish(parsed.success ? parsed.data : failure('invalid scenario outcome', 'executor_error'))
       })
       executor.once('error', (err) =>
-        finish({ status: 'failed', error: `scenario process error: ${err.message}` }),
+        finish(failure(`scenario process error: ${err.message}`, 'executor_error')),
       )
       executor.once('close', (code, killed) =>
-        finish({
-          status: 'failed',
-          error: `scenario process exited without a result (${killed ?? code})`,
-        }),
+        finish(
+          failure(`scenario process exited without a result (${killed ?? code})`, 'executor_error'),
+        ),
       )
-      const start = () =>
+      const start = () => {
+        scenarioStarted = null // dispatch is not proof that the scenario body began
         executor.send(
           {
             type: 'start',
@@ -164,15 +174,13 @@ export async function runScenario(
               : null,
           },
           (err) => {
-            if (err) finish({ status: 'failed', error: `could not start scenario: ${err.message}` })
+            if (err) finish(failure(`could not start scenario: ${err.message}`, 'executor_error'))
           },
         )
+      }
     })
   } catch (err) {
-    outcome = {
-      status: 'failed',
-      error: err instanceof Error ? (err.stack ?? err.message) : String(err),
-    }
+    outcome = failure(err instanceof Error ? (err.stack ?? err.message) : String(err))
   }
   gate.stopScenario()
   const stopped = !child || (await stopExecutor(child, exited, device.name))
@@ -180,6 +188,7 @@ export async function runScenario(
     queueId: lease.queueId,
     device: device.name,
     ...outcome,
+    scenarioStarted: outcome.scenarioStarted ?? undefined,
     durationMs: Math.round(performance.now() - started),
   }
   if (!stopped) {

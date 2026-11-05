@@ -13,7 +13,12 @@ export function countsText({ run, counts }: RunReport) {
     .filter(([, n]) => n > 0)
     .map(([status, n]) => `${n} ${status}`)
     .join(', ')
-  return run.durationMs === null ? shown : `${shown} · ${formatDuration(run.durationMs)}`
+  const recovery = run.recovery?.infrastructureRecoveries
+    ? ` · infrastructure recoveries ${run.recovery.infrastructureRecoveries}/${run.recovery.maxRunInfrastructureRecoveries}`
+    : ''
+  return (
+    (run.durationMs === null ? shown : `${shown} · ${formatDuration(run.durationMs)}`) + recovery
+  )
 }
 
 // The first line of an error that says something.

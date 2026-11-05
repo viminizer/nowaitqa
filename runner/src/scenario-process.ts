@@ -6,6 +6,7 @@ import { ScenarioCommand, type ScenarioOutcome } from './scenario-protocol.ts'
 
 const controller = new AbortController()
 let started = false
+let scenarioStarted = false
 const stop = () => controller.abort(new Error('attempt stopped'))
 process.on('SIGTERM', stop)
 process.on('disconnect', () => {
@@ -44,6 +45,10 @@ process.on('message', (input) => {
       connectionRetryTimeout: 30_000,
     })
     controller.signal.throwIfAborted()
+    scenarioStarted = true
+    process.send?.({ type: 'started' }, (err) => {
+      if (err) console.error('could not report scenario progress', err)
+    })
     await scenario.run(driver, command.account, { signal: controller.signal })
   }
   const finish = (outcome: ScenarioOutcome) => {
@@ -54,11 +59,18 @@ process.on('message', (input) => {
     })
   }
   void run().then(
-    () => finish({ status: 'passed' }),
+    () => finish({ status: 'passed', phase: 'scenario', failureKind: null, scenarioStarted }),
     (err) =>
       finish({
         status: 'failed',
         error: err instanceof Error ? (err.stack ?? err.message) : String(err),
+        phase: scenarioStarted ? 'scenario' : 'setup',
+        failureKind:
+          err instanceof Error &&
+          (err.name === 'AssertionError' || (err as NodeJS.ErrnoException).code === 'ERR_ASSERTION')
+            ? 'assertion'
+            : 'scenario_error',
+        scenarioStarted,
       }),
   )
 })

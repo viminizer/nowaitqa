@@ -124,8 +124,16 @@ export async function heartbeat(
   device: string,
   signal?: AbortSignal,
   timeoutMs = 5_000,
+  scenarioStarted?: true,
 ) {
-  const res = await call('POST', '/heartbeat', [204, 409], { queueId, device }, timeoutMs, signal)
+  const res = await call(
+    'POST',
+    '/heartbeat',
+    [204, 409],
+    { queueId, device, scenarioStarted },
+    timeoutMs,
+    signal,
+  )
   return res.status === 204
 }
 

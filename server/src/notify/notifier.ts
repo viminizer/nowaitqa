@@ -1,7 +1,7 @@
 // The one interface every chat platform implements (Slack, Telegram; Kevin asked for it so more
 // can be added the same way). A platform only formats and sends: what to send and when live in
 // notify/index.ts, and the HTTP retry and screenshot fallback in notify/http.ts.
-import type { RunSummary, ScenarioStatus } from '@nowait/shared'
+import type { AttemptOrigin, RunSummary, ScenarioStatus } from '@nowait/shared'
 
 // A finished run, the same for every platform.
 export type RunReport = {
@@ -13,7 +13,7 @@ export type RunReport = {
   moreFailures: number // failed scenarios left out of `failures`
 }
 
-export type Failure = {
+export type Failure = AttemptOrigin & {
   scenarioId: string
   device: string | null
   error: string | null

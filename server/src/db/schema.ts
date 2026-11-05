@@ -1,4 +1,4 @@
-import type { Catalog } from '@nowait/shared'
+import type { AttemptOrigin, Catalog, RecoveryAction } from '@nowait/shared'
 import { sql } from 'drizzle-orm'
 import {
   boolean,
@@ -43,6 +43,11 @@ export const runs = pgTable(
       .default('running'),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp({ withTimezone: true }),
+    // Nullable policy preserves legacy runs' original total-attempt behavior.
+    maxAttempts: integer(),
+    maxInfrastructureRecoveries: integer(),
+    maxRunInfrastructureRecoveries: integer(),
+    infrastructureRecoveries: integer().notNull().default(0),
   },
   // notifications: finished runs by when they finished
   (t) => [
@@ -62,6 +67,9 @@ export const queue = pgTable(
     slot: integer().notNull().default(0), // which item of the run this is (a scenario can repeat)
     scenarioId: text().notNull(),
     attempt: integer().notNull().default(1),
+    scenarioAttempt: integer().notNull().default(1),
+    infrastructureRecoveries: integer().notNull().default(0),
+    scenarioStarted: boolean(), // true after confirmed progress; otherwise unknown until a result
     status: text({ enum: ['pending', 'leased', 'done'] })
       .notNull()
       .default('pending'),
@@ -102,6 +110,12 @@ export const results = pgTable(
     error: text(),
     screenshot: text(), // artifact key (storage/), like "5/views.checkbox-0-1.png"
     log: text(), // artifact key
+    phase: text().$type<AttemptOrigin['phase']>().notNull().default('unknown'),
+    failureKind: text().$type<AttemptOrigin['failureKind']>().default('unknown'),
+    scenarioStarted: boolean(),
+    recoveryAction: text().$type<RecoveryAction>().notNull().default('none'),
+    recoveryNote: text(),
+    retryQueueId: integer().references(() => queue.id),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

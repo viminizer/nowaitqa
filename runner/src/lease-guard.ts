@@ -11,6 +11,7 @@ export function watchLease(device: Device, lease: Lease, shutdown: AbortSignal) 
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   let pending: Promise<void> | undefined
+  let scenarioStarted: true | undefined
 
   const check = () => {
     if (stopped) throw new Error('attempt finished')
@@ -33,6 +34,7 @@ export function watchLease(device: Device, lease: Lease, shutdown: AbortSignal) 
         device.name,
         signal,
         Math.min(5_000, lifetime / 4),
+        scenarioStarted,
       )
       check()
       if (!alive) {
@@ -64,7 +66,18 @@ export function watchLease(device: Device, lease: Lease, shutdown: AbortSignal) 
     clearTimeout(timer)
     controller.abort(new Error('attempt finished'))
   }
-  return { signal, check, renew, stop }
+  return {
+    signal,
+    check,
+    renew,
+    stop,
+    markStarted: () => {
+      scenarioStarted = true
+    },
+    get stopping() {
+      return shutdown.aborted
+    },
+  }
 }
 
 export type LeaseGuard = ReturnType<typeof watchLease>

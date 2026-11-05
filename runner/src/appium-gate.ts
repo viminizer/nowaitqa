@@ -33,6 +33,7 @@ export async function openAppiumGate(device: Device) {
   let sessionId: string | undefined
   let uncertainCreation = false
   let abandonedCommand = false
+  let sessionUnavailable = false
   const sessions = new Set<string>()
   const requests = new Map<
     ClientRequest,
@@ -122,6 +123,7 @@ export async function openAppiumGate(device: Device) {
       requests.set(request, { response: res, scenario, creating })
       request.on('error', (err: NodeJS.ErrnoException) => {
         const active = requests.get(request)
+        if (active?.creating && err.code === 'ECONNREFUSED') sessionUnavailable = true
         if (active?.creating && err.code !== 'ECONNREFUSED') uncertainCreation = true
         requests.delete(request)
         log(device.name, 'Appium command failed', err)
@@ -154,6 +156,9 @@ export async function openAppiumGate(device: Device) {
   let detach = () => {}
   return {
     options,
+    get sessionUnavailable() {
+      return sessionUnavailable
+    },
     get needsCleanup() {
       return abandonedCommand || uncertainCreation
     },
@@ -161,6 +166,7 @@ export async function openAppiumGate(device: Device) {
       detach()
       guard = current
       token = randomUUID()
+      sessionUnavailable = false
       scenarioAllowed = true
       commandsAllowed = true
       const stop = () => stopRequests(false)

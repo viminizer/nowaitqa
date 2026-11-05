@@ -119,7 +119,53 @@ export const Lease = z.object({
 })
 export type Lease = z.infer<typeof Lease>
 
-export const HeartbeatBody = z.object({ queueId: DbId, device: z.string().min(1) })
+export const HeartbeatBody = z.object({
+  queueId: DbId,
+  device: z.string().min(1),
+  // Only positive progress is persisted; no progress after a lost worker means unknown.
+  scenarioStarted: z.literal(true).optional(),
+})
+
+export const AttemptPhase = z.enum(['setup', 'scenario', 'cleanup', 'queue', 'unknown'])
+export const FailureKind = z.enum([
+  'assertion',
+  'scenario_error',
+  'timeout',
+  'session_unavailable',
+  'executor_error',
+  'lease_lost',
+  'cancelled',
+  'run_stuck',
+  'unknown',
+])
+export type FailureKind = z.infer<typeof FailureKind>
+export const AttemptOrigin = z.object({
+  phase: AttemptPhase.default('unknown'),
+  failureKind: FailureKind.nullable().default(null),
+  scenarioStarted: z.boolean().nullable().default(null),
+})
+export type AttemptOrigin = z.infer<typeof AttemptOrigin>
+export const RecoveryAction = z.enum([
+  'none',
+  'scenario_retry',
+  'infrastructure_retry',
+  'scenario_exhausted',
+  'infrastructure_exhausted',
+])
+export type RecoveryAction = z.infer<typeof RecoveryAction>
+
+// Shared by the attempt table and both chat platforms. Unknown is not evidence of no execution.
+export function originText(origin: AttemptOrigin) {
+  const execution =
+    origin.scenarioStarted === null
+      ? 'execution unknown'
+      : origin.scenarioStarted
+        ? 'scenario ran'
+        : 'scenario did not start'
+  return [origin.phase, origin.failureKind?.replaceAll('_', ' '), execution]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 // A paused worker closes its idle Appium session before waiting, then leases again.
 export const DevicePause = z.object({
@@ -127,16 +173,37 @@ export const DevicePause = z.object({
   retryAfterSeconds: z.number().int().positive().max(86_400),
 })
 
-export const ResultBody = z.object({
-  queueId: DbId,
-  device: z.string().min(1),
-  status: z.enum(['passed', 'failed']),
-  durationMs: z.number().int().nonnegative().max(INT4_MAX),
-  error: z.string().optional(),
-  screenshot: z.base64().optional(), // PNG, as WebdriverIO's takeScreenshot() returns it
-  log: z.string().optional(),
-  cleanupComplete: z.boolean().optional(),
-})
+export const ResultBody = z
+  .object({
+    queueId: DbId,
+    device: z.string().min(1),
+    status: z.enum(['passed', 'failed']),
+    durationMs: z.number().int().nonnegative().max(INT4_MAX),
+    error: z.string().optional(),
+    screenshot: z.base64().optional(), // PNG, as WebdriverIO's takeScreenshot() returns it
+    log: z.string().optional(),
+    cleanupComplete: z.boolean().optional(),
+    phase: AttemptPhase.optional(),
+    failureKind: FailureKind.nullable().optional(),
+    scenarioStarted: z.boolean().optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.status === 'passed' && body.failureKind != null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['failureKind'],
+        message: 'a passed attempt has no failure kind',
+      })
+    if (
+      body.failureKind === 'session_unavailable' &&
+      (body.phase !== 'setup' || body.scenarioStarted !== false || body.status !== 'failed')
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['failureKind'],
+        message: 'session_unavailable requires a failed setup before scenario execution',
+      })
+  })
 export type ResultBody = z.infer<typeof ResultBody>
 
 // Every error response.
@@ -177,7 +244,23 @@ export const RunSummary = z.object({
   createdAt: z.coerce.date(),
   finishedAt: z.coerce.date().nullable(),
   durationMs: z.number().int().nullable(), // created -> finished
-  scenarios: z.array(z.object({ id: z.string(), status: ScenarioStatus })),
+  // null for legacy runs; new runs retain their effective retry policy across server restarts.
+  recovery: z
+    .object({
+      maxAttempts: z.number().int().positive(),
+      maxInfrastructureRecoveries: z.number().int().nonnegative(),
+      maxRunInfrastructureRecoveries: z.number().int().nonnegative(),
+      infrastructureRecoveries: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
+  scenarios: z.array(
+    z.object({
+      id: z.string(),
+      status: ScenarioStatus,
+      origin: AttemptOrigin.nullable().default(null),
+    }),
+  ),
   // Per phone: busy = holding a lease (install, reset, run). idle = the rest of the run.
   devices: z.array(
     z.object({
@@ -209,6 +292,8 @@ export const Attempt = z.object({
   slot: z.number().int(),
   scenarioId: z.string(),
   attempt: z.number().int(),
+  scenarioAttempt: z.number().int().positive().nullable().default(null),
+  infrastructureRecoveries: z.number().int().nonnegative().default(0),
   device: z.string().nullable(),
   status: z.enum(['pending', 'leased', 'passed', 'failed']),
   leasedAt: z.coerce.date().nullable(),
@@ -217,6 +302,10 @@ export const Attempt = z.object({
   error: z.string().nullable(),
   screenshot: z.boolean(), // a file is saved; get it from the dashboard files route
   log: z.boolean(),
+  ...AttemptOrigin.shape,
+  recoveryAction: RecoveryAction.default('none'),
+  recoveryNote: z.string().nullable().default(null),
+  retryQueueId: DbId.nullable().default(null),
 })
 export type Attempt = z.infer<typeof Attempt>
 

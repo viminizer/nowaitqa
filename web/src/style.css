@@ -113,7 +113,8 @@ table {
   width: 100%;
   border-collapse: collapse;
 }
-.device-state {
+.device-state,
+.attempt-detail {
   min-width: calc(var(--space) * 28);
   overflow-wrap: anywhere;
 }
