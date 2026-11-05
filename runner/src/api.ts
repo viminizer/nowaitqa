@@ -160,7 +160,7 @@ export async function lease(
     'POST',
     '/lease',
     [200, 204, 404, 423],
-    { device, commits, runId, cleanup: true, inputs: true },
+    { device, commits, runId, cleanup: true, inputs: true, profiles: true },
     35_000,
     signal,
   )

@@ -52,7 +52,10 @@ async function buildReport(runId: number): Promise<RunReport | null> {
   const latest = db
     .selectDistinctOn([queue.slot], {
       slot: queue.slot,
-      scenarioId: queue.scenarioId,
+      scenarioId:
+        sql<string>`CASE WHEN ${queue.profile} IS NULL THEN ${queue.scenarioId} ELSE ${queue.scenarioId} || ' [' || (${queue.profile}->>'name') || ']' END`.as(
+          'scenario_id',
+        ),
       device: queue.device,
       status: results.status,
       error: results.error,
@@ -81,7 +84,7 @@ async function buildReport(runId: number): Promise<RunReport | null> {
       : null,
     flaky: run.scenarios
       .filter((s) => s.status === 'flaky')
-      .map((s) => s.id)
+      .map((s) => (s.profile ? `${s.id} [${s.profile.name}]` : s.id))
       .slice(0, REPORT_LIMIT),
     failures: failed.map(({ slot, status, ...f }) => f),
     moreFailures: Math.max(counts.failed - failed.length, 0),

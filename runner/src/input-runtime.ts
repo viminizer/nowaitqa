@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
-import type { Device, InputRuntime } from '@nowait/shared'
+import { type Device, type InputRuntime, virtualDeviceClass } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
 import { z } from 'zod'
 import { log } from './log.ts'
@@ -43,6 +43,10 @@ export async function inputRuntime(
     )
   }
   return {
+    deviceClass:
+      typeof (caps['appium:udid'] ?? caps.udid) === 'string'
+        ? virtualDeviceClass(device.platform, String(caps['appium:udid'] ?? caps.udid))
+        : null,
     node: process.version,
     runner,
     webdriver,

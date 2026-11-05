@@ -41,7 +41,7 @@ export function Timeline({ run }: { run: RunDetail }) {
                 if (a.device !== phone || !a.leasedAt) return null
                 const from = a.leasedAt.getTime()
                 const to = a.finishedAt?.getTime() ?? end
-                const label = `${a.scenarioId}, attempt ${a.attempt}: ${a.status}, ${duration(to - from)}`
+                const label = `${a.scenarioId}${a.profile ? ` [${a.profile.name}]` : ''}, attempt ${a.attempt}: ${a.status}, ${duration(to - from)}`
                 return (
                   <div
                     key={a.queueId}

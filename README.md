@@ -536,3 +536,47 @@ returns the manifest and 50 attempt observations, with `next` for further pages.
 trigger tokens can read it. The dashboard shows identities/observations and downloads the same
 paged JSON through its authenticated manifest route. Input identity does not recreate an expired
 app or backend environment; it explains mismatches and unavailability.
+
+### Required device and OS coverage
+
+Profiles are optional. A run without profiles keeps the shared queue behavior, including a
+single physical phone or virtual device. To require virtual-device coverage, add up to10 named
+profiles with `deviceClass` (`android-emulator` or `ios-simulator`) and an exact
+`platformVersion` reported by Appium. All profiles in a run match its platform and share its app
+artifact and scenario revision. Five scenarios with two profiles create ten required slots;
+repeats multiply that coverage. Profile names are unique within the run.
+
+```json
+{
+  "platform": "android",
+  "appBuild": "/builds/app.apk",
+  "profiles": [
+    { "name": "android-15", "deviceClass": "android-emulator", "platformVersion": "15" },
+    { "name": "android-16", "deviceClass": "android-emulator", "platformVersion": "16" }
+  ]
+}
+```
+
+Register each virtual device with its `platformVersion` using the dashboard or `PUT /devices`.
+An omitted version in a device update preserves the existing setting; null clears it. Existing
+registrations default to unknown and still serve ordinary runs. Android emulator profiles
+require an adb emulator serial (`emulator-...`); iOS Simulator profiles require its UUID. Matching
+registered versions determine scheduling eligibility; actual Appium session capabilities must
+confirm the OS version and virtual-device class before the scenario can start. Unknown or
+incompatible capabilities fail explicitly. Restart the runner after changing a device's host,
+serial or Appium connection details; an existing worker cannot execute under a replacement
+registration.
+
+In the dashboard, optionally list required OS versions when starting a run. Run details show
+counts per profile and explain when no enabled matching device is registered. This is eligibility,
+not a readiness probe. Attempts, timeline labels, downloads and retries retain their profile;
+reruns snapshot the original definitions and preserve each selected scenario/profile pair.
+Profiles that receive no compatible progress for `STUCK_RUN_MINUTES` fail their pending slots,
+even if another profile keeps progressing; an active compatible attempt is allowed to finish.
+A missing profile is never counted as successful coverage. Booting devices and installing or
+switching OS runtimes remain operator tasks.
+
+Upgrade server and runners before using profiles. Older runners cannot lease required-profile
+work. Historical runs keep their original queue behavior, nullable profile evidence and input
+manifest semantics. Runtime/profile verification adds no new retry budget: an incompatible app
+or runtime remains a visible setup failure under the saved limits.

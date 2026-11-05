@@ -14,6 +14,15 @@ function StartRun() {
         path: '/runs',
         body: {
           platform: fields.get('platform'),
+          profiles: String(fields.get('versions') ?? '')
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean)
+            .map((platformVersion) => ({
+              name: `${fields.get('platform')}-${platformVersion}`,
+              deviceClass: fields.get('platform') === 'ios' ? 'ios-simulator' : 'android-emulator',
+              platformVersion,
+            })),
           appBuild: String(fields.get('appBuild') ?? '').trim(),
         },
       },
@@ -49,6 +58,19 @@ function StartRun() {
             placeholder="/builds/app.apk or https://example.com/app.zip"
             aria-describedby="start-build-help"
           />
+        </label>
+        <label htmlFor="start-versions">
+          Required OS versions (optional)
+          <input
+            id="start-versions"
+            name="versions"
+            placeholder="15, 16"
+            aria-describedby="start-versions-help"
+          />
+          <span className="muted" id="start-versions-help">
+            For emulators and Simulators: every scenario must run on each listed version. Leave
+            blank for the normal shared queue.
+          </span>
         </label>
         <span className="action">
           <button type="submit">{action.isPending ? 'Starting…' : 'Start run'}</button>

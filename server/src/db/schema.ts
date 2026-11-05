@@ -1,6 +1,7 @@
 import type {
   AttemptOrigin,
   Catalog,
+  ExecutionProfile,
   InputRuntime,
   RecoveryAction,
   ResolvedInputs,
@@ -27,6 +28,7 @@ export const devices = pgTable('devices', {
   systemPort: integer().notNull(),
   host: text().notNull(),
   enabled: boolean().notNull().default(true),
+  platformVersion: text(),
   lastSeenAt: timestamp({ withTimezone: true }),
   pausedUntil: timestamp({ withTimezone: true }),
   pauseReason: text(),
@@ -55,6 +57,7 @@ export const runs = pgTable(
     maxInfrastructureRecoveries: integer(),
     maxRunInfrastructureRecoveries: integer(),
     infrastructureRecoveries: integer().notNull().default(0),
+    profiles: jsonb().$type<ExecutionProfile[]>(),
     inputIntent: jsonb().$type<RunInputIntent>(),
     resolvedInputs: jsonb().$type<ResolvedInputs>(),
     expectedInputs: jsonb().$type<ResolvedInputs>(),
@@ -77,6 +80,7 @@ export const queue = pgTable(
       .references(() => runs.id),
     slot: integer().notNull().default(0), // which item of the run this is (a scenario can repeat)
     scenarioId: text().notNull(),
+    profile: jsonb().$type<ExecutionProfile>(),
     attempt: integer().notNull().default(1),
     scenarioAttempt: integer().notNull().default(1),
     infrastructureRecoveries: integer().notNull().default(0),
