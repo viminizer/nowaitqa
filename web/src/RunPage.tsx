@@ -5,6 +5,7 @@ import {
   inputSource,
   originText,
   RunDetail,
+  releaseReasonText,
   stageText,
 } from '@nowait/shared'
 import { useApi } from './api.ts'
@@ -33,7 +34,15 @@ function ErrorText({ error }: { error: string }) {
 }
 
 // One page of the run's attempts. The server sorts them: failures first once the run is over.
-function Attempts({ runId, page }: { runId: number; page: number }) {
+function Attempts({
+  runId,
+  page,
+  platform,
+}: {
+  runId: number
+  page: number
+  platform?: 'android' | 'ios'
+}) {
   const state = useApi(`/runs/${runId}/attempts?page=${page}`, AttemptPage, needsAttemptRefresh)
   return (
     <Loaded state={state}>
@@ -68,7 +77,15 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                   {attempts.map((a) => (
                     <tr key={a.queueId}>
                       <td>
-                        {a.scenarioId}
+                        {platform ? (
+                          <a
+                            href={`#/history?scenarioId=${encodeURIComponent(a.scenarioId)}&platform=${platform}`}
+                          >
+                            {a.scenarioId}
+                          </a>
+                        ) : (
+                          a.scenarioId
+                        )}
                         {a.profile && (
                           <p className="muted">
                             {a.profile.name} · {a.profile.deviceClass} {a.profile.platformVersion}
@@ -313,6 +330,30 @@ export function RunPage({ id, page }: { id: number; page: number }) {
               <dd>{run.trigger}</dd>
               <dt>Split</dt>
               <dd>{run.split}</dd>
+              <dt>Release gate</dt>
+              <dd>
+                {run.release ? (
+                  <>
+                    <Status status={run.release.gate.status} /> {run.release.gate.policy} policy
+                    <p>{releaseReasonText(run.release.gate.reason)}</p>
+                    {run.release.source === 'legacy' && (
+                      <p className="muted">Derived for a legacy run; no saved release decision.</p>
+                    )}
+                    {run.release.partialCoverage && (
+                      <p>Subset rerun: cannot certify full release coverage.</p>
+                    )}
+                    {run.release.rerunOf && (
+                      <p>
+                        Rerun of{' '}
+                        <a href={`#/runs/${run.release.rerunOf}`}>#{run.release.rerunOf}</a>.
+                        Original history is preserved.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  'Release gate unavailable; upgrade the server.'
+                )}
+              </dd>
               <dt>Retry policy</dt>
               <dd>
                 {run.recovery ? (
@@ -373,7 +414,7 @@ export function RunPage({ id, page }: { id: number; page: number }) {
         )}
       </Loaded>
       <h2>Attempts</h2>
-      <Attempts runId={id} page={page} />
+      <Attempts runId={id} page={page} platform={state.data?.platform} />
     </>
   )
 }

@@ -207,12 +207,22 @@ export const Catalog = z.object({
 })
 export type Catalog = z.infer<typeof Catalog>
 
+export const RecoveryLimits = z.object({
+  maxAttempts: z.number().int().positive(),
+  maxInfrastructureRecoveries: z.number().int().nonnegative(),
+  maxRunInfrastructureRecoveries: z.number().int().nonnegative(),
+})
+
+export const ReleasePolicy = z.enum(['permissive', 'strict'])
+export type ReleasePolicy = z.infer<typeof ReleasePolicy>
+
 export const CreateRunBody = z
   .object({
     platform: Platform,
     appBuild: z.string().min(1), // URL or Appium-host path: Android APK or iOS Simulator .app / .app.zip
     commit: Commit.optional(), // the scenarios' commit; default: the newest catalog a runner sent
     trigger: z.string().default('manual'),
+    releasePolicy: ReleasePolicy.default('permissive'),
     // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
     // (the old way, kept to compare against in the benchmark).
     split: z.enum(['queue', 'fixed']).default('queue'),
@@ -589,7 +599,67 @@ export function countStatuses(statuses: ScenarioStatus[]) {
   return counts
 }
 
+export const ReleaseGate = z.object({
+  policy: ReleasePolicy,
+  status: z.enum(['pending', 'accepted', 'rejected']),
+  reason: z.enum([
+    'running',
+    'accepted',
+    'failed_scenarios',
+    'flaky_scenarios',
+    'missing_coverage',
+    'decision_unavailable',
+  ]),
+  counts: z.object({
+    pending: z.number().int().nonnegative(),
+    passed: z.number().int().nonnegative(),
+    flaky: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+})
+export type ReleaseGate = z.infer<typeof ReleaseGate>
+export const ReleaseReport = z.object({
+  gate: ReleaseGate,
+  source: z.enum(['saved', 'legacy']),
+  partialCoverage: z.boolean(),
+  rerunOf: DbId.nullable(),
+})
+export function evaluateReleaseGate(
+  policy: ReleasePolicy,
+  status: 'running' | 'passed' | 'failed',
+  counts: ReturnType<typeof countStatuses>,
+  completeCoverage: boolean,
+): ReleaseGate {
+  const reason =
+    status === 'running'
+      ? 'running'
+      : !completeCoverage || Object.values(counts).reduce((n, c) => n + c, 0) === 0
+        ? 'missing_coverage'
+        : status === 'failed' || counts.failed > 0 || counts.pending > 0
+          ? 'failed_scenarios'
+          : policy === 'strict' && counts.flaky > 0
+            ? 'flaky_scenarios'
+            : 'accepted'
+  return {
+    policy,
+    status: reason === 'running' ? 'pending' : reason === 'accepted' ? 'accepted' : 'rejected',
+    reason,
+    counts,
+  }
+}
+export function releaseReasonText(reason: ReleaseGate['reason']) {
+  return {
+    running: 'Awaiting completed execution',
+    accepted: 'Release policy satisfied',
+    failed_scenarios: 'Required scenarios did not pass',
+    flaky_scenarios: 'Strict policy rejects later-pass recovery',
+    missing_coverage: 'Full required coverage is missing',
+    decision_unavailable: 'Saved release decision is unavailable',
+  }[reason]
+}
+
 export const RunSummary = z.object({
+  release: ReleaseReport.nullable().default(null),
   id: z.number().int(),
   platform: Platform,
   appBuild: z.string(),
@@ -614,9 +684,7 @@ export const RunSummary = z.object({
   // null for legacy runs; new runs retain their effective retry policy across server restarts.
   recovery: z
     .object({
-      maxAttempts: z.number().int().positive(),
-      maxInfrastructureRecoveries: z.number().int().nonnegative(),
-      maxRunInfrastructureRecoveries: z.number().int().nonnegative(),
+      ...RecoveryLimits.shape,
       infrastructureRecoveries: z.number().int().nonnegative(),
     })
     .nullable()
@@ -758,3 +826,59 @@ export const RunAgainBody = z.object({ failedOnly: z.boolean() })
 // Dashboard actions must send this header. Another site's page can't add it without asking the
 // server first (CORS), so it can't use the password the browser keeps.
 export const ACTION_HEADER = 'x-nowait-action'
+
+export const ScenarioHistoryQuery = z.object({
+  scenarioId: z.string().min(1).max(4096),
+  platform: Platform,
+  days: z.coerce
+    .number()
+    .pipe(z.union([z.literal(7), z.literal(30), z.literal(90)]))
+    .default(30),
+  until: z.iso
+    .datetime({ offset: true })
+    .refine((v) => new Date(v).getTime() >= 0, 'until must be 1970 or later')
+    .optional(),
+  after: z
+    .string()
+    .regex(/^[a-f0-9]{32}$/)
+    .optional(),
+})
+export type ScenarioHistoryQuery = z.infer<typeof ScenarioHistoryQuery>
+const HistoryCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+export const ScenarioHistoryPage = z.object({
+  from: z.coerce.date(),
+  until: z.coerce.date(),
+  entries: z
+    .array(
+      z.object({
+        key: z.string().regex(/^[a-f0-9]{32}$/),
+        commit: z.string(),
+        split: z.enum(['queue', 'fixed']),
+        inputs: ResolvedInputs.nullable(),
+        profile: ExecutionProfile.nullable(),
+        runtime: InputRuntime.nullable(),
+        runtimeState: z.enum(['verified', 'mixed', 'unknown']),
+        comparable: z.boolean(),
+        recovery: RecoveryLimits.nullable(),
+        partialCoverage: z.boolean(),
+        latestRunId: DbId,
+        firstObserved: z.coerce.date(),
+        lastObserved: z.coerce.date(),
+        samples: HistoryCount,
+        firstPass: HistoryCount,
+        laterPass: HistoryCount,
+        applicationFailure: HistoryCount,
+        interruptedApplication: HistoryCount,
+        infrastructureOnly: HistoryCount,
+        unknown: HistoryCount,
+        infrastructureInterruptions: HistoryCount,
+        rawFlaky: HistoryCount,
+      }),
+    )
+    .max(50),
+  next: z
+    .string()
+    .regex(/^[a-f0-9]{32}$/)
+    .nullable(),
+})
+export type ScenarioHistoryPage = z.infer<typeof ScenarioHistoryPage>

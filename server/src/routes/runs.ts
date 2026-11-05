@@ -6,12 +6,20 @@ import {
   ManifestPage,
   ManifestQuery,
   RunSummary,
+  ScenarioHistoryPage,
+  ScenarioHistoryQuery,
 } from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { BadRunError, createRun, getRun, inputManifestPage } from '../queue.ts'
+import { BadRunError, createRun, getRun, inputManifestPage, scenarioHistory } from '../queue.ts'
 
 export const runRoutes: FastifyPluginAsyncZod = async (app) => {
+  for (const path of ['/history', '/dashboard/api/history'])
+    app.get(
+      path,
+      { schema: { querystring: ScenarioHistoryQuery, response: { 200: ScenarioHistoryPage } } },
+      async (req) => scenarioHistory(req.query),
+    )
   app.get(
     '/runs/:id/manifest',
     {

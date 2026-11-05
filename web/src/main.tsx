@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { queryClient } from './api.ts'
 import { DevicesPage } from './DevicesPage.tsx'
 import { FixturesPage } from './FixturesPage.tsx'
+import { HistoryPage } from './HistoryPage.tsx'
 import { RunPage } from './RunPage.tsx'
 import { RunsPage } from './RunsPage.tsx'
 import './style.css'
@@ -40,6 +41,9 @@ function App() {
           <a href="#/fixtures" aria-current={path === '/fixtures' ? 'page' : undefined}>
             Fixtures
           </a>
+          <a href="#/history" aria-current={path === '/history' ? 'page' : undefined}>
+            Reliability
+          </a>
         </nav>
       </header>
       <main>
@@ -47,6 +51,8 @@ function App() {
         <ErrorBoundary key={`${path}?${query}`}>
           {runId ? (
             <RunPage id={Number(runId)} page={page} />
+          ) : path === '/history' ? (
+            <HistoryPage params={params} />
           ) : path === '/fixtures' ? (
             <FixturesPage after={params.get('after')} queueId={params.get('queueId')} />
           ) : path === '/devices' ? (

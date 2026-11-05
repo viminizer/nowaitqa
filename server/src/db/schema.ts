@@ -7,11 +7,14 @@ import type {
   FixtureState,
   InputRuntime,
   RecoveryAction,
+  ReleaseGate,
+  ReleasePolicy,
   ResolvedInputs,
   RunInputIntent,
 } from '@nowait/shared'
 import { sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -61,6 +64,10 @@ export const runs = pgTable(
     maxInfrastructureRecoveries: integer(),
     maxRunInfrastructureRecoveries: integer(),
     infrastructureRecoveries: integer().notNull().default(0),
+    releasePolicy: text().$type<ReleasePolicy>(),
+    releaseGate: jsonb().$type<ReleaseGate>(),
+    rerunOf: integer().references((): AnyPgColumn => runs.id),
+    partialCoverage: boolean().notNull().default(false),
     profiles: jsonb().$type<ExecutionProfile[]>(),
     inputIntent: jsonb().$type<RunInputIntent>(),
     resolvedInputs: jsonb().$type<ResolvedInputs>(),
@@ -106,6 +113,7 @@ export const queue = pgTable(
   (t) => [
     index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),
     index('queue_run_idx').on(t.runId, t.id), // a run's attempts (dashboard, summaries)
+    index('queue_history_idx').on(t.scenarioId, t.runId, t.slot, t.attempt),
     index('queue_slot_idx').on(t.runId, t.slot, t.attempt), // health: a failed item's later attempts
     index('queue_leased_idx').on(t.device).where(sql`status = 'leased'`), // dashboard: busy phones
     index('queue_cleanup_idx').on(t.device).where(sql`cleanup_pending`),
