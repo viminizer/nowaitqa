@@ -2,7 +2,7 @@
 // and failures to another, each by its message_thread_id, like Kevin's send-book bot. The bot must
 // be a member of the group, allowed to post in those topics.
 import { setTimeout as sleep } from 'node:timers/promises'
-import { messageOf } from '@nowait/shared'
+import { messageOf, originText } from '@nowait/shared'
 import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'
@@ -111,10 +111,12 @@ function summaryHtml(report: RunReport) {
 }
 
 // Each failure names its run: in the errors topic it is not next to the summary.
-function failureHtml(report: RunReport, { scenarioId, device, error }: Failure) {
+function failureHtml(report: RunReport, failure: Failure) {
+  const { scenarioId, device, error } = failure
   const where = device ? ` on ${escapeText(device)}` : ''
   return [
     `❌ <b>${escapeText(scenarioId)}</b>${where} · ${runTitle(report)}`,
+    escapeText(originText(failure)),
     `<code>${escapeText(cut(errorLine(error), CAPTION_CHARS))}</code>`,
   ].join('\n')
 }

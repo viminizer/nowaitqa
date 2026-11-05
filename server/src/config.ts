@@ -15,7 +15,9 @@ const Env = z.object({
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
-  MAX_ATTEMPTS: z.coerce.number().int().positive().default(2), // 1 run + 1 retry
+  MAX_ATTEMPTS: z.coerce.number().int().positive().max(100).default(2), // scenario budget
+  MAX_INFRA_RECOVERIES: z.coerce.number().int().min(0).max(100).default(2), // per slot
+  MAX_RUN_INFRA_RECOVERIES: z.coerce.number().int().min(0).max(10_000).default(10),
   // Greater than the worker's 30s contact interval plus its 10s request timeout (R34).
   DEVICE_OFFLINE_SECONDS: z.coerce.number().int().min(60).max(86_400).default(120),
   // Suspected unhealthy phones take no new work for this long, then resume automatically.

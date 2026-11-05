@@ -2,6 +2,7 @@
 
 import {
   type Attempt,
+  type AttemptOrigin,
   type AttemptPage,
   type Catalog,
   type CreateRunBody,
@@ -150,7 +151,15 @@ async function insertRun(newRun: NewRun, items: string[]) {
   const expected = await expectedTimes(newRun.platform, items)
 
   const runId = await db.transaction(async (tx) => {
-    const [run] = await tx.insert(runs).values(newRun).returning({ id: runs.id })
+    const [run] = await tx
+      .insert(runs)
+      .values({
+        ...newRun,
+        maxAttempts: config.MAX_ATTEMPTS,
+        maxInfrastructureRecoveries: config.MAX_INFRA_RECOVERIES,
+        maxRunInfrastructureRecoveries: config.MAX_RUN_INFRA_RECOVERIES,
+      })
+      .returning({ id: runs.id })
     if (!run) throw new Error('run insert returned nothing')
     await tx.insert(queue).values(
       items.map((scenarioId, slot) => ({
@@ -168,6 +177,16 @@ async function insertRun(newRun: NewRun, items: string[]) {
 }
 
 type Run = typeof runs.$inferSelect
+
+const recoveryOf = (run: Run): RunSummary['recovery'] =>
+  run.maxAttempts === null
+    ? null
+    : {
+        maxAttempts: run.maxAttempts,
+        maxInfrastructureRecoveries: run.maxInfrastructureRecoveries ?? 0,
+        maxRunInfrastructureRecoveries: run.maxRunInfrastructureRecoveries ?? 0,
+        infrastructureRecoveries: run.infrastructureRecoveries,
+      }
 
 // When a lease taken or renewed now runs out.
 const leaseEnd = (seconds = config.LEASE_SECONDS) => sql`now() + make_interval(secs => ${seconds})`
@@ -192,10 +211,11 @@ function scenarioStatus(
   run: Run,
   attempt: number,
   result: 'passed' | 'failed' | null,
+  queueStatus: QueueRow['status'],
 ): ScenarioStatus {
   if (result === 'passed') return attempt === 1 ? 'passed' : 'flaky'
-  // a finished run has no retry coming (it may have been stuck before one)
-  if (result === 'failed' && (attempt >= config.MAX_ATTEMPTS || run.status !== 'running')) {
+  // A latest done row has no successor: either budget can end before the raw attempt limit.
+  if (result === 'failed' && (queueStatus === 'done' || run.status !== 'running')) {
     return 'failed'
   }
   return 'pending'
@@ -220,7 +240,8 @@ export async function listRuns(before?: number): Promise<RunList> {
   const latest = await db
     .selectDistinctOn([queue.runId, queue.slot], {
       runId: queue.runId,
-      attempt: queue.attempt,
+      attempt: queue.scenarioAttempt,
+      queueStatus: queue.status,
       result: results.status,
     })
     .from(queue)
@@ -238,9 +259,12 @@ export async function listRuns(before?: number): Promise<RunList> {
     older: page.length === RUNS_PAGE ? (page.at(-1)?.id ?? null) : null,
     runs: page.map((run) => ({
       ...run,
+      recovery: recoveryOf(run),
       durationMs: runDuration(run),
       counts: countStatuses(
-        (byRun.get(run.id) ?? []).map((a) => scenarioStatus(run, a.attempt, a.result)),
+        (byRun.get(run.id) ?? []).map((a) =>
+          scenarioStatus(run, a.attempt, a.result, a.queueStatus),
+        ),
       ),
     })),
   }
@@ -257,6 +281,8 @@ const attemptColumns = {
   slot: queue.slot,
   scenarioId: queue.scenarioId,
   attempt: queue.attempt,
+  scenarioAttempt: queue.scenarioAttempt,
+  infrastructureRecoveries: queue.infrastructureRecoveries,
   device: queue.device,
   queueStatus: queue.status,
   leasedAt: queue.leasedAt,
@@ -276,14 +302,30 @@ async function scenariosOf(run: Run) {
   const latest = await db
     .selectDistinctOn([queue.slot], {
       scenarioId: queue.scenarioId,
-      attempt: queue.attempt,
+      attempt: queue.scenarioAttempt,
+      queueStatus: queue.status,
       result: results.status,
+      phase: results.phase,
+      failureKind: results.failureKind,
+      scenarioStarted: sql<
+        boolean | null
+      >`coalesce(${results.scenarioStarted}, ${queue.scenarioStarted})`,
     })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
     .where(eq(queue.runId, run.id))
     .orderBy(queue.slot, desc(queue.attempt))
-  return latest.map((a) => ({ id: a.scenarioId, status: scenarioStatus(run, a.attempt, a.result) }))
+  return latest.map((a) => ({
+    id: a.scenarioId,
+    status: scenarioStatus(run, a.attempt, a.result, a.queueStatus),
+    origin: a.result
+      ? {
+          phase: a.phase ?? 'unknown',
+          failureKind: a.failureKind,
+          scenarioStarted: a.scenarioStarted,
+        }
+      : null,
+  }))
 }
 
 async function summarize(run: Run): Promise<RunSummary> {
@@ -306,6 +348,7 @@ async function summarize(run: Run): Promise<RunSummary> {
   const durationMs = runDuration(run)
   return {
     ...run,
+    recovery: recoveryOf(run),
     durationMs,
     scenarios: await scenariosOf(run),
     devices: phones.flatMap(({ name, attempts, busyMs }) => {
@@ -365,6 +408,16 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
       error: results.error,
       screenshot: results.screenshot,
       log: results.log,
+      phase: sql<
+        AttemptOrigin['phase']
+      >`coalesce(${results.phase}, case when ${queue.scenarioStarted} then 'scenario' else 'unknown' end)`,
+      failureKind: results.failureKind,
+      scenarioStarted: sql<
+        boolean | null
+      >`coalesce(${results.scenarioStarted}, ${queue.scenarioStarted})`,
+      recoveryAction: sql<Attempt['recoveryAction']>`coalesce(${results.recoveryAction}, 'none')`,
+      recoveryNote: results.recoveryNote,
+      retryQueueId: results.retryQueueId,
     })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
@@ -537,10 +590,10 @@ async function takeAccount(tx: Tx, queueId: number): Promise<string | null | fal
   return username
 }
 
-export async function heartbeat(queueId: number, device: string) {
+export async function heartbeat(queueId: number, device: string, scenarioStarted?: true) {
   const updated = await db
     .update(queue)
-    .set({ leaseUntil: leaseEnd() })
+    .set({ leaseUntil: leaseEnd(), ...(scenarioStarted ? { scenarioStarted: true } : {}) })
     .where(and(eq(queue.id, queueId), eq(queue.device, device), eq(queue.status, 'leased')))
     .returning({ id: queue.id })
   return updated.length > 0
@@ -616,6 +669,10 @@ export async function submitResult(body: ResultBody) {
       error,
       screenshot: kept(screenshot),
       log: kept(log),
+      phase: body.phase,
+      failureKind: body.failureKind,
+      scenarioStarted: body.scenarioStarted,
+      cleanupComplete: body.cleanupComplete,
     })
     return true
   })
@@ -640,7 +697,14 @@ export async function expireLeases() {
     rows.sort((a, b) => a.runId - b.runId || a.id - b.id)
     for (const row of rows) {
       const error = `lease expired: lost contact with device ${row.device}`
-      await recordAttempt(tx, row, { status: 'failed', durationMs: 0, error })
+      await recordAttempt(tx, row, {
+        status: 'failed',
+        durationMs: 0,
+        error,
+        phase: row.scenarioStarted ? 'scenario' : 'unknown',
+        failureKind: 'lease_lost',
+        scenarioStarted: row.scenarioStarted,
+      })
     }
     return rows.length
   })
@@ -692,7 +756,15 @@ async function closeRun(tx: Tx, runId: number, error: string) {
       .where(and(eq(queue.runId, runId), ne(queue.status, 'done')))
       .returning()
     if (open.length === 0) break
-    for (const row of open) await saveResult(tx, row, { status: 'failed', durationMs: 0, error })
+    for (const row of open)
+      await saveResult(tx, row, {
+        status: 'failed',
+        durationMs: 0,
+        error,
+        phase: row.leasedAt === null ? 'queue' : row.scenarioStarted ? 'scenario' : 'unknown',
+        failureKind: error === 'cancelled on the dashboard' ? 'cancelled' : 'run_stuck',
+        scenarioStarted: row.leasedAt === null ? false : row.scenarioStarted,
+      })
   }
   await finishRunIfDone(tx, runId)
 }
@@ -834,7 +906,11 @@ export async function pauseUnhealthyDevices() {
   return paused
 }
 
-type Outcome = Pick<ResultBody, 'status' | 'durationMs' | 'error'> & {
+type Outcome = Pick<
+  ResultBody,
+  'status' | 'durationMs' | 'error' | 'phase' | 'failureKind' | 'cleanupComplete'
+> & {
+  scenarioStarted?: boolean | null
   screenshot?: string
   log?: string
 }
@@ -847,7 +923,21 @@ function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
     platform: sql`(SELECT platform FROM ${runs} WHERE id = ${row.runId})`,
     attempt: row.attempt,
     device: row.device,
-    ...outcome,
+    status: outcome.status,
+    durationMs: outcome.durationMs,
+    error: outcome.error,
+    screenshot: outcome.screenshot,
+    log: outcome.log,
+    phase:
+      row.scenarioStarted && outcome.phase === 'setup' ? 'scenario' : (outcome.phase ?? 'unknown'),
+    failureKind:
+      outcome.status === 'passed'
+        ? null
+        : row.scenarioStarted && outcome.failureKind === 'session_unavailable'
+          ? 'unknown'
+          : (outcome.failureKind ?? 'unknown'),
+    scenarioStarted:
+      row.scenarioStarted === true ? true : (outcome.scenarioStarted ?? row.scenarioStarted),
   })
 }
 
@@ -855,17 +945,66 @@ function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
 // nothing is left.
 async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
   await saveResult(tx, row, outcome)
-
-  if (outcome.status === 'failed' && row.attempt < config.MAX_ATTEMPTS) {
-    // Same slot, any phone: in a fixed split the assigned phone may be the problem.
-    await tx.insert(queue).values({
-      runId: row.runId,
-      slot: row.slot,
-      scenarioId: row.scenarioId,
-      attempt: row.attempt + 1,
-      expectedMs: row.expectedMs,
-    })
-    return
+  if (outcome.status === 'failed') {
+    // Same queue→run lock order as completion/cancellation. Serializes the shared ceiling;
+    // NO KEY UPDATE remains compatible with concurrent result inserts' FK KEY SHARE locks.
+    const [run] = await tx.select().from(runs).where(eq(runs.id, row.runId)).for('no key update')
+    if (run?.status !== 'running') return
+    const infrastructure =
+      run.maxAttempts !== null &&
+      outcome.phase === 'setup' &&
+      outcome.failureKind === 'session_unavailable' &&
+      outcome.scenarioStarted === false &&
+      outcome.cleanupComplete === true &&
+      row.scenarioStarted !== true
+    const maxAttempts = run.maxAttempts ?? config.MAX_ATTEMPTS
+    const slotLimit = run.maxInfrastructureRecoveries ?? 0
+    const runLimit = run.maxRunInfrastructureRecoveries ?? 0
+    const retry = infrastructure
+      ? row.infrastructureRecoveries < slotLimit && run.infrastructureRecoveries < runLimit
+      : row.scenarioAttempt < maxAttempts
+    let retryQueueId: number | undefined
+    if (retry) {
+      if (infrastructure)
+        await tx
+          .update(runs)
+          .set({
+            infrastructureRecoveries: run.infrastructureRecoveries + 1,
+          })
+          .where(eq(runs.id, run.id))
+      // Any phone, including in a fixed split. The normal lease rules retain old cleanup holds.
+      const [next] = await tx
+        .insert(queue)
+        .values({
+          runId: row.runId,
+          slot: row.slot,
+          scenarioId: row.scenarioId,
+          attempt: row.attempt + 1,
+          scenarioAttempt: row.scenarioAttempt + (infrastructure ? 0 : 1),
+          infrastructureRecoveries: row.infrastructureRecoveries + (infrastructure ? 1 : 0),
+          expectedMs: row.expectedMs,
+        })
+        .returning({ id: queue.id })
+      if (!next) throw new Error('retry insert returned nothing')
+      retryQueueId = next.id
+    }
+    await tx
+      .update(results)
+      .set({
+        recoveryAction: infrastructure
+          ? retry
+            ? 'infrastructure_retry'
+            : 'infrastructure_exhausted'
+          : retry
+            ? 'scenario_retry'
+            : 'scenario_exhausted',
+        recoveryNote: infrastructure
+          ? `Confirmed session connection refusal; ${retry ? 'new session requested' : 'recovery exhausted'} (slot ${row.infrastructureRecoveries + (retry ? 1 : 0)}/${slotLimit}, run ${run.infrastructureRecoveries + (retry ? 1 : 0)}/${runLimit})`
+          : `Scenario attempt ${row.scenarioAttempt}/${maxAttempts}; ${retry ? 'retry requested' : 'no scenario attempts remain'}`,
+        retryQueueId,
+      })
+      .where(eq(results.queueId, row.id))
+    if (retry) return
   }
 
   await finishRunIfDone(tx, row.runId)

@@ -1,6 +1,6 @@
 // Slack, through the Web API with a bot token: a webhook can't post in threads or upload files.
 // The app needs the chat:write and files:write scopes, and must be in the channel.
-import { messageOf } from '@nowait/shared'
+import { messageOf, originText } from '@nowait/shared'
 import { post, sendScreenshot } from './http.ts'
 import { type Failure, type Notifier, PartialSendError, type RunReport } from './notifier.ts'
 import { countsText, errorLine, escapeText, moreText } from './text.ts'
@@ -90,9 +90,10 @@ function summaryText(report: RunReport) {
   ].join('\n')
 }
 
-function failureText({ scenarioId, device, error }: Failure) {
+function failureText(failure: Failure) {
+  const { scenarioId, device, error } = failure
   // backticks would end the code block early
   const line = errorLine(error).replaceAll('`', "'")
   const where = device ? ` on ${escapeText(device)}` : ''
-  return `:x: *${escapeText(scenarioId)}*${where}\n\`\`\`${escapeText(line)}\`\`\``
+  return `:x: *${escapeText(scenarioId)}*${where}\n${escapeText(originText(failure))}\n\`\`\`${escapeText(line)}\`\`\``
 }

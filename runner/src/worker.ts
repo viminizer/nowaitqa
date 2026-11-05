@@ -1,6 +1,7 @@
 // One worker per phone: take the next scenario, stop its executor, report it, repeat.
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
+  type AttemptOrigin,
   DEVICE_CONTACT_INTERVAL_MS,
   type Device,
   every,
@@ -54,6 +55,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
       let guard: LeaseGuard | undefined
       let publishing = false
       let stopped = true
+      let phase: AttemptOrigin['phase'] = 'setup'
       try {
         current = await lease(device.name, commits(), session?.runId, shutdown)
         if (!current) continue
@@ -69,20 +71,15 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         ) {
           await resetApp(device, session)
         } else {
+          phase = 'cleanup'
           if (!(await gate.cleanup())) throw new Error('previous session cleanup not confirmed')
           session = null
           headers = gate.activate(guard)
+          phase = 'setup'
           session = await openSession(device, current, gate)
         }
         guard.check()
-        const execution = await runScenario(
-          session.driver,
-          device,
-          current,
-          guard.signal,
-          gate,
-          headers,
-        )
+        const execution = await runScenario(session.driver, device, current, guard, gate, headers)
         stopped = execution.stopped
         let clean = stopped
         if (
@@ -114,12 +111,23 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           return
         }
       } catch (err) {
+        const interruption = guard?.signal.aborted
+          ? guard.stopping
+            ? 'cancelled'
+            : 'lease_lost'
+          : null
         gate.stopCommands()
         const clean = (await gate.cleanup()) && stopped
         guard?.stop()
         session = null
         if (current && clean) await acknowledge(current)
-        if (current && !publishing) await reportRunnerError(device, current, err, clean)
+        if (current && !publishing)
+          await reportRunnerError(device, current, err, clean, {
+            phase,
+            failureKind:
+              interruption ??
+              (phase === 'setup' && gate.sessionUnavailable ? 'session_unavailable' : 'unknown'),
+          })
         if (!clean) {
           log(
             device.name,
@@ -248,6 +256,7 @@ async function reportRunnerError(
   lease: Lease,
   err: unknown,
   cleanupComplete: boolean,
+  origin: Pick<AttemptOrigin, 'phase' | 'failureKind'>,
 ) {
   await sendResult({
     queueId: lease.queueId,
@@ -256,5 +265,7 @@ async function reportRunnerError(
     durationMs: 0,
     error: `runner error: ${messageOf(err)}`,
     cleanupComplete,
+    ...origin,
+    scenarioStarted: false,
   }).catch((sendErr) => log(device.name, 'could not report the runner error', sendErr))
 }

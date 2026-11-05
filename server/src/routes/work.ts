@@ -77,7 +77,7 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
   )
 
   app.post('/heartbeat', { schema: { body: HeartbeatBody } }, async (req, reply) => {
-    const alive = await heartbeat(req.body.queueId, req.body.device)
+    const alive = await heartbeat(req.body.queueId, req.body.device, req.body.scenarioStarted)
     return alive ? reply.code(204).send() : reply.code(409).send({ error: 'lease is gone' })
   })
 

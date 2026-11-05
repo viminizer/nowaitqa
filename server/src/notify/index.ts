@@ -57,6 +57,9 @@ async function buildReport(runId: number): Promise<RunReport | null> {
       status: results.status,
       error: results.error,
       screenshot: results.screenshot,
+      phase: results.phase,
+      failureKind: results.failureKind,
+      scenarioStarted: results.scenarioStarted,
     })
     .from(queue)
     .innerJoin(results, eq(results.queueId, queue.id))

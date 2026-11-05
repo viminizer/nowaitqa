@@ -1,4 +1,6 @@
 // The single definition of the parent/executor IPC messages. Nothing executes on import.
+
+import { AttemptOrigin } from '@nowait/shared'
 import { z } from 'zod'
 
 export const ScenarioCommand = z.discriminatedUnion('type', [
@@ -17,6 +19,8 @@ export const ScenarioCommand = z.discriminatedUnion('type', [
 export const ScenarioOutcome = z.object({
   status: z.enum(['passed', 'failed']),
   error: z.string().optional(),
+  ...AttemptOrigin.shape,
 })
 export type ScenarioOutcome = z.infer<typeof ScenarioOutcome>
 export const ScenarioReady = z.object({ type: z.literal('ready') })
+export const ScenarioStarted = z.object({ type: z.literal('started') })

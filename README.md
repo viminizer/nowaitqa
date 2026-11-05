@@ -163,6 +163,44 @@ Scenario code must not detach subprocesses from the owned group; such external p
 explicit cleanup by the scenario author. Already accepted external/backend operations cannot be undone by terminating JavaScript; use
 idempotent test-environment operations for those effects.
 
+### Failure origins and recovery
+
+Attempts retain their original error and artifacts, with a phase (`setup`, `scenario`, `cleanup`,
+`queue` or `unknown`), failure kind and whether scenario execution began. `GET /runs/:id` includes
+the latest origin per scenario; the dashboard's attempt pages retain every physical attempt,
+its test-attempt number, recovery decision and successor. Missing progress after worker loss is
+**unknown**, not proof that the scenario did not run. Assertion errors, scenario-code errors,
+timeouts, lost leases, cancellation and unconfirmed failures remain distinguishable.
+
+New runs record their effective limits when created:
+
+- `MAX_ATTEMPTS` (default2, range1–100): the scenario-attempt budget, including the first attempt.
+- `MAX_INFRA_RECOVERIES` (default2, range0–100): separate recoveries per scenario slot.
+- `MAX_RUN_INFRA_RECOVERIES` (default10, range0–10000): recoveries shared across the entire run.
+
+Only a connection refusal confirmed by the runner's Appium gateway **before session creation**,
+with no scenario execution and confirmed cleanup, qualifies for infrastructure recovery. A new
+session is requested through the normal queue; the failed worker keeps its normal error cooldown,
+so another eligible worker can take the retry. Other failed attempts, including unknown setup
+errors, invalid builds, app crashes, assertions, executor errors, timeouts, lost leases and local
+runner interruption, consume the ordinary scenario budget. Dashboard cancellation closes the run
+without queuing retries. Existing health pauses remain; there is no message-pattern classifier or
+new automatic device healer.
+
+Physical attempt numbers always increase. A pure infrastructure recovery does not consume a test
+attempt: a subsequent first test success is `passed`, with its recovery count/history visible in
+the dashboard and chat summaries. An application failure followed by success stays `flaky`, even
+if infrastructure recovery happened between them. Exhausted recovery is `failed` and never a
+successful release result. Each retry records its reason, action, limits and next queue id; the
+run-wide allowance is serialized transactionally across concurrent workers. Cleanup reservations
+still prevent unsafe device/account reuse.
+
+Upgrade the server before runners to retain progress and origin fields. Older runners/results
+remain accepted as unknown origin and use ordinary attempts. Existing runs keep their legacy
+total-attempt policy, with no newly privileged infrastructure allowance; their old attempt
+counters are preserved by the migration. New response fields have defaults for old servers, and
+the existing running/passed/failed run and pending/passed/flaky/failed scenario vocabulary stays.
+
 ### Device health
 
 The server checks device health every 15 seconds. It pauses a phone when **three different

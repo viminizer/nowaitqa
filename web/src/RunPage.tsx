@@ -1,4 +1,4 @@
-import { type Attempt, AttemptPage, countStatuses, RunDetail } from '@nowait/shared'
+import { type Attempt, AttemptPage, countStatuses, originText, RunDetail } from '@nowait/shared'
 import { useApi } from './api.ts'
 import { Timeline } from './Timeline.tsx'
 import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.tsx'
@@ -48,6 +48,8 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                     <th>Status</th>
                     <th>Phone</th>
                     <th>Duration</th>
+                    <th>Execution</th>
+                    <th>Recovery</th>
                     <th>Error</th>
                     <th>Files</th>
                   </tr>
@@ -57,7 +59,10 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                     <tr key={a.queueId}>
                       <td>
                         {a.scenarioId}
-                        {a.attempt > 1 && <span className="muted"> retry {a.attempt - 1}</span>}
+                        <p className="muted">
+                          #{a.queueId} · attempt {a.attempt}
+                          {a.scenarioAttempt !== null && <> · test attempt {a.scenarioAttempt}</>}
+                        </p>
                       </td>
                       <td>
                         <Status status={a.status} />
@@ -72,7 +77,15 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                       </td>
                       <td>{a.device ?? '-'}</td>
                       <td>{duration(a.durationMs)}</td>
-                      <td className="error-text">{a.error && <ErrorText error={a.error} />}</td>
+                      <td className="attempt-detail">{originText(a)}</td>
+                      <td className="attempt-detail">
+                        {a.recoveryAction === 'none' ? '-' : a.recoveryAction.replaceAll('_', ' ')}
+                        {a.recoveryNote && <p>{a.recoveryNote}</p>}
+                        {a.retryQueueId !== null && <p>Next attempt #{a.retryQueueId}</p>}
+                      </td>
+                      <td className="error-text attempt-detail">
+                        {a.error && <ErrorText error={a.error} />}
+                      </td>
                       <td className="files">
                         {a.screenshot && (
                           <a href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
@@ -162,6 +175,19 @@ export function RunPage({ id, page }: { id: number; page: number }) {
               <dd>{run.trigger}</dd>
               <dt>Split</dt>
               <dd>{run.split}</dd>
+              <dt>Retry policy</dt>
+              <dd>
+                {run.recovery ? (
+                  <>
+                    {run.recovery.maxAttempts} test attempts; up to{' '}
+                    {run.recovery.maxInfrastructureRecoveries} infrastructure recoveries per
+                    scenario, {run.recovery.infrastructureRecoveries}/
+                    {run.recovery.maxRunInfrastructureRecoveries} used across this run.
+                  </>
+                ) : (
+                  'Legacy total-attempt policy'
+                )}
+              </dd>
               <dt>App build</dt>
               <dd>{run.appBuild}</dd>
             </dl>
