@@ -488,3 +488,51 @@ and the test machine must be able to download the APK from Jenkins.
   so without it the tokens and the dashboard password travel unencrypted.
 - `appBuild` can be any URL or path, and the phones install it. Only give the trigger token to
   trusted callers.
+
+### Verified run inputs
+
+New runs record immutable input intent and bind their resolved app bytes, scenario checkout
+tree/discovery folder, package/lock declarations and effective session mode/timeout before
+executing a scenario. Changing bytes behind the same app path or URL fails verification on later
+attempts and reruns. Reruns keep expected inputs separate from newly resolved inputs;
+missing/expired or changed app inputs fail explicitly before observation is claimed. Legacy runs
+retain unavailable input fields, and cannot claim an exact replay: start a new run instead.
+
+The runner rejects dirty source anywhere in the scenario Git checkout before loading it and
+checks again immediately before execution. Imported sibling helpers share the checkout identity;
+source symlinks must remain inside it. Commit source and dependency declaration changes first,
+and use a complete checkout without skip-worktree/assume-unchanged index flags. Use a
+self-contained source checkout: submodules and opaque nested source checkouts fail explicitly.
+Managed readiness markers and installed `node_modules` output are separate from scenario source.
+Ignored executable source (JavaScript, TypeScript, native modules and common scripts) has a
+separate byte digest; Git ignore rules cannot hide generated helper changes. Dependency identity
+records package and lock declarations; it does not attest to arbitrary external services or
+manually altered shared package stores. Operator-private Git excludes (local info/global
+excludes) describe metadata; runtime code must not be imported through their external metadata
+links. Ignored non-code data and separate private checkouts are outside this source record.
+Runtime observations identify runner/Node/WebdriverIO and observable Appium, automation/driver
+and OS versions per attempt; unavailable observations remain unknown.
+
+Verified app staging requires Appium on the runner host with the same filesystem (loopback
+Appium URL). Remote Appium-host files cannot be verified by reading a similarly named local
+file; new verified runs fail explicitly for remote endpoints. The runner copies a local APK, ZIP
+or Simulator `.app`, or downloads a URL to a private snapshot, and installs that snapshot.
+APK/ZIP identity is SHA256 of bytes. Simulator-directory identity includes sorted relative
+paths, entry types, executable bits, complete file bytes and internal symlink targets; it
+excludes root folder names and timestamps and rejects escaping links/unsupported entries.
+Snapshots stay until session cleanup is confirmed; uncertain cleanup retains them for operator
+verification.
+
+`INPUT_MAX_BYTES` defaults to 512 MiB (range 1 MiB–1 GiB); directories are limited to 100,000
+entries and downloads to 120s. The byte budget also bounds ignored executable-source hashing.
+This bounds accepted inputs, not a hard filesystem quota during a concurrent source mutation or
+filesystem copy. URL locators may contain credentials: manifests redact their paths/query/user
+info and never contain account passwords or runner tokens.
+
+Upgrade the server and runners before starting verified runs: old runners can finish legacy work
+but cannot lease new input-verifying runs. `POST /inputs` binds inputs under the active lease;
+`POST /inputs/runtime` records immutable attempt observations. `GET /runs/:id/manifest?page=0`
+returns the manifest and 50 attempt observations, with `next` for further pages. Runner and
+trigger tokens can read it. The dashboard shows identities/observations and downloads the same
+paged JSON through its authenticated manifest route. Input identity does not recreate an expired
+app or backend environment; it explains mismatches and unavailability.

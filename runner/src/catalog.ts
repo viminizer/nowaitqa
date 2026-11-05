@@ -10,6 +10,7 @@ import { loadScenarios, type Scenario } from '@nowait-qa/sdk'
 import { z } from 'zod'
 import { referencedCommits, sendCatalog } from './api.ts'
 import { config } from './config.ts'
+import { scenarioIdentity } from './input-files.ts'
 import { log } from './log.ts'
 
 const exec = promisify(execFile)
@@ -93,6 +94,7 @@ export async function startScenarios(signal?: AbortSignal) {
   catalogSignal = signal
   if (!config.SCENARIOS_REPO) {
     const commit = FullCommit.parse(await git(root, 'rev-parse', 'HEAD'))
+    await scenarioIdentity(root, commit, signal)
     const version = {
       commit,
       dir: root,
@@ -216,6 +218,7 @@ async function prepare(
         signal: catalogSignal,
       })
     }
+    await scenarioIdentity(dir, commit, catalogSignal)
     const scenarios = new Map((await loadScenarios(dir)).map((s) => [s.id, s]))
     if (!ready) {
       if ((await bytes()) > config.SCENARIO_CACHE_BYTES)

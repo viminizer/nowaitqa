@@ -1,4 +1,11 @@
-import { type Attempt, AttemptPage, countStatuses, originText, RunDetail } from '@nowait/shared'
+import {
+  type Attempt,
+  AttemptPage,
+  countStatuses,
+  inputSource,
+  originText,
+  RunDetail,
+} from '@nowait/shared'
 import { useApi } from './api.ts'
 import { Timeline } from './Timeline.tsx'
 import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.tsx'
@@ -77,7 +84,27 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                       </td>
                       <td>{a.device ?? '-'}</td>
                       <td>{duration(a.durationMs)}</td>
-                      <td className="attempt-detail">{originText(a)}</td>
+                      <td className="attempt-detail">
+                        {originText(a)}
+                        <p className="muted">
+                          {a.inputsVerified ? 'Inputs verified' : 'Inputs unavailable'}
+                        </p>
+                        {a.inputRuntime && (
+                          <details>
+                            <summary>Runtime</summary>
+                            <p>
+                              Node {a.inputRuntime.node} · runner {a.inputRuntime.runner} ·
+                              WebdriverIO {a.inputRuntime.webdriver}
+                            </p>
+                            <p>
+                              Appium {a.inputRuntime.appium ?? 'unknown'};{' '}
+                              {a.inputRuntime.automation ?? 'automation unknown'}; driver{' '}
+                              {a.inputRuntime.driver ?? 'unknown'}; OS{' '}
+                              {a.inputRuntime.platformVersion ?? 'unknown'}
+                            </p>
+                          </details>
+                        )}
+                      </td>
                       <td className="attempt-detail">
                         {a.recoveryAction === 'none' ? '-' : a.recoveryAction.replaceAll('_', ' ')}
                         {a.recoveryNote && <p>{a.recoveryNote}</p>}
@@ -171,6 +198,64 @@ export function RunPage({ id, page }: { id: number; page: number }) {
               <dd>
                 <code>{run.commit}</code>
               </dd>
+              <dt>Input manifest</dt>
+              <dd>
+                {!run.inputManifest.intent ? (
+                  'Unavailable for this legacy run'
+                ) : !run.inputManifest.resolved ? (
+                  <>
+                    <p>
+                      {run.status === 'running'
+                        ? 'Awaiting verified inputs'
+                        : 'Inputs were not verified'}
+                    </p>
+                    {run.inputManifest.expected && (
+                      <p>
+                        Expected replay app SHA256:{' '}
+                        <code>{run.inputManifest.expected.app.sha256}</code>
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      App SHA256: <code>{run.inputManifest.resolved.app.sha256}</code>
+                    </p>
+                    <p>
+                      Scenario tree: <code>{run.inputManifest.resolved.scenarios.tree}</code>
+                    </p>
+                    <p>
+                      Scenario folder:{' '}
+                      <code>
+                        {run.inputManifest.resolved.scenarios.directory ??
+                          'unavailable for older evidence'}
+                      </code>
+                    </p>
+                    <p>
+                      Dependency lock:{' '}
+                      <code>
+                        {run.inputManifest.resolved.scenarios.lockSha256 ?? 'no lockfile'}
+                      </code>
+                    </p>
+                    <p>
+                      Ignored code SHA256:{' '}
+                      <code>
+                        {run.inputManifest.resolved.scenarios.ignoredCodeSha256 ??
+                          'unavailable for older evidence'}
+                      </code>
+                    </p>
+                    <p>
+                      {run.inputManifest.resolved.config.sessionMode} sessions;{' '}
+                      {run.inputManifest.resolved.config.scenarioTimeoutSeconds}s scenario limit
+                    </p>
+                  </>
+                )}
+                <p>
+                  <a href={`/dashboard/api/runs/${id}/manifest?page=${page}`}>
+                    Download inputs and attempt page {page + 1}
+                  </a>
+                </p>
+              </dd>
               <dt>Trigger</dt>
               <dd>{run.trigger}</dd>
               <dt>Split</dt>
@@ -189,7 +274,7 @@ export function RunPage({ id, page }: { id: number; page: number }) {
                 )}
               </dd>
               <dt>App build</dt>
-              <dd>{run.appBuild}</dd>
+              <dd>{run.inputManifest.intent?.appSource ?? inputSource(run.appBuild)}</dd>
             </dl>
 
             <h2>Phones</h2>
