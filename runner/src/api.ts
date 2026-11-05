@@ -10,6 +10,7 @@ import {
   type InputRuntime,
   Lease,
   messageOf,
+  type ProgressBody,
   ResolvedInputs,
   type ResultBody,
   RevisionPage,
@@ -49,6 +50,10 @@ async function call(
     throw new HttpError(`${method} ${path} -> ${res.status} ${await res.text()}`, res.status)
   }
   return res
+}
+
+export async function sendProgress(body: ProgressBody, signal: AbortSignal) {
+  await call('POST', '/progress', [204, 409], body, 5_000, signal)
 }
 
 export async function sendCatalog(catalog: Catalog, signal?: AbortSignal) {

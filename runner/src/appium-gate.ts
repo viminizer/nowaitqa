@@ -26,6 +26,7 @@ function reject(response: ServerResponse, message: string) {
 export async function openAppiumGate(device: Device) {
   const target = new URL(device.appiumUrl)
   const parentToken = randomUUID()
+  let trace: ((method: string, path: string) => (status: number | null) => void) | undefined
   let guard: LeaseGuard | undefined
   let token = ''
   let scenarioAllowed = false
@@ -37,7 +38,12 @@ export async function openAppiumGate(device: Device) {
   const sessions = new Set<string>()
   const requests = new Map<
     ClientRequest,
-    { response: ServerResponse; scenario: boolean; creating: boolean }
+    {
+      response: ServerResponse
+      scenario: boolean
+      creating: boolean
+      finish: (status: number | null) => void
+    }
   >()
   const upstreamUrl = (path: string) =>
     new URL(target.origin + target.pathname.replace(/\/$/, '') + path)
@@ -46,6 +52,7 @@ export async function openAppiumGate(device: Device) {
       if (scenarioOnly && !active.scenario) continue
       if (active.creating) uncertainCreation = true
       abandonedCommand = true
+      active.finish(null)
       reject(active.response, 'attempt stopped')
       request.destroy()
     }
@@ -74,6 +81,7 @@ export async function openAppiumGate(device: Device) {
       current.check()
       if (guard !== current || !commandsAllowed || (scenario && !scenarioAllowed))
         return reject(res, 'attempt stopped')
+      const finish = trace?.(req.method ?? '', path) ?? (() => {})
       const url = upstreamUrl(req.url ?? '/')
       const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
         url,
@@ -96,6 +104,7 @@ export async function openAppiumGate(device: Device) {
             }
           })
           response.on('end', () => {
+            finish(response.statusCode ?? 502)
             requests.delete(request)
             if (creating && response.statusCode && response.statusCode < 300) {
               try {
@@ -120,8 +129,9 @@ export async function openAppiumGate(device: Device) {
           response.pipe(res)
         },
       )
-      requests.set(request, { response: res, scenario, creating })
+      requests.set(request, { response: res, scenario, creating, finish })
       request.on('error', (err: NodeJS.ErrnoException) => {
+        finish(null)
         const active = requests.get(request)
         if (active?.creating && err.code === 'ECONNREFUSED') sessionUnavailable = true
         if (active?.creating && err.code !== 'ECONNREFUSED') uncertainCreation = true
@@ -156,6 +166,52 @@ export async function openAppiumGate(device: Device) {
   let detach = () => {}
   return {
     options,
+    observe(current: typeof trace) {
+      trace = current
+    },
+    get sessionId() {
+      return sessionId
+    },
+    // Evidence uses the same parent authentication and lease fence as ordinary commands.
+    async inspect(
+      kind: 'screenshot' | 'hierarchy' | 'device_log' | 'appium_events',
+      signal: AbortSignal,
+    ) {
+      if (!sessionId) throw new Error('no session was established')
+      const paths = {
+        screenshot: '/screenshot',
+        hierarchy: '/source',
+        device_log: '/se/log',
+        appium_events: '/appium/events',
+      }
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/session/${encodeURIComponent(sessionId)}${paths[kind]}`,
+        {
+          method: kind === 'screenshot' || kind === 'hierarchy' ? 'GET' : 'POST',
+          headers: { [PARENT_HEADER]: parentToken, 'content-type': 'application/json' },
+          body:
+            kind === 'device_log'
+              ? JSON.stringify({ type: device.platform === 'ios' ? 'syslog' : 'logcat' })
+              : kind === 'appium_events'
+                ? '{}'
+                : undefined,
+          signal,
+        },
+      )
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Appium returned ${response.status}`)
+      }
+      const chunks: Uint8Array[] = []
+      let bytes = 0
+      const limit = kind === 'screenshot' ? MAX_BODY : 256 * 1024
+      for await (const chunk of response.body ?? []) {
+        bytes += chunk.length
+        if (bytes > limit) throw new Error('Appium evidence exceeds response limit')
+        chunks.push(chunk)
+      }
+      return JSON.parse(Buffer.concat(chunks).toString()).value as unknown
+    },
     get sessionUnavailable() {
       return sessionUnavailable
     },
@@ -188,12 +244,14 @@ export async function openAppiumGate(device: Device) {
       stopRequests(false)
       let clean = !uncertainCreation
       for (const id of sessions) {
+        const finish = trace?.('DELETE', '/session/owned')
         try {
           const response = await fetch(upstreamUrl(`/session/${encodeURIComponent(id)}`), {
             method: 'DELETE',
             signal: AbortSignal.timeout(CLEANUP_MS),
           })
           const data = response.status === 204 ? null : await response.json()
+          finish?.(response.status)
           if (
             !(response.ok && (data === null || data.value === null)) &&
             !(response.status === 404 && data?.value?.error === 'invalid session id')
@@ -202,6 +260,7 @@ export async function openAppiumGate(device: Device) {
           sessions.delete(id)
           if (sessionId === id) sessionId = undefined
         } catch (err) {
+          finish?.(null)
           clean = false
           log(device.name, 'session cleanup not confirmed', err)
         }

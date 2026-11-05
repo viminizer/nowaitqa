@@ -7,6 +7,7 @@ import {
   InputRuntimeBody,
   Lease,
   LeaseBody,
+  ProgressBody,
   ResolvedInputs,
   ResultBody,
   RevisionPage,
@@ -21,6 +22,7 @@ import {
   leaseNext,
   PausedDeviceError,
   recordInputRuntime,
+  recordProgress,
   referencedRevisions,
   releaseLease,
   saveCatalog,
@@ -116,6 +118,10 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
       }
     },
   )
+
+  app.post('/progress', { schema: { body: ProgressBody } }, async (req, reply) => {
+    return reply.code((await recordProgress(req.body)) ? 204 : 409).send()
+  })
 
   app.post('/heartbeat', { schema: { body: HeartbeatBody } }, async (req, reply) => {
     const alive = await heartbeat(req.body.queueId, req.body.device, req.body.scenarioStarted)

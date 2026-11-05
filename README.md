@@ -580,3 +580,32 @@ Upgrade server and runners before using profiles. Older runners cannot lease req
 work. Historical runs keep their original queue behavior, nullable profile evidence and input
 manifest semantics. Runtime/profile verification adds no new retry budget: an incompatible app
 or runtime remains a visible setup failure under the saved limits.
+
+### Attempt diagnostics
+
+The run's paged attempts show the last reported phase: waiting for resources, app preparation,
+session preparation/reset, executor startup, scenario execution, evidence collection, or cleanup.
+Progress updates every five seconds while leased. Phase history and Appium command timings retain
+only the latest 80 entries each, with omission counts. A stopped runner's last update can be stale;
+progress never renews its lease or counts as successful scenario execution.
+
+**Download diagnostics** returns an authenticated JSON bundle correlated by run, attempt, device,
+scenario commit and session. It includes verified inputs, observed runtime, effective session mode
+and scenario timeout, phase history, safe command timings, and a bounded original error. Before
+session disposal, failed attempts also try to capture the existing screenshot, device log tail,
+UI tree structure, and Appium event timings. Setup failures use the same path, including when
+startup failed after creating a session. Missing or unsupported evidence has an explicit reason.
+A legacy, interrupted, or expired attempt can still download available server metadata.
+
+Capture shares a 15-second budget. Non-image Appium responses are capped at 256 KiB; device logs
+retain at most 500 lines / 64 KiB, tree structure 64 KiB, and Appium timings 80 commands. Screenshots
+use the existing authenticated artifact link and a 5 MiB response cap. The bundle omits command
+bodies, selectors, headers, raw capabilities, UI text and attributes; it redacts known runner and
+test-account credentials and URL locators from collected text. Remote Appium host logs are marked
+unavailable because the session API does not expose them. Safe phase/command metadata supplies
+the runner and gateway trace. Screenshots retain the existing failure-evidence policy and may
+show app content.
+
+Bundles use the same disk/S3 store, dashboard authentication and `ARTIFACT_DAYS` cleanup as other
+artifacts. Collection, progress publication, or upload failure cannot change a test verdict.
+Upgrade the server before runners to enable progress and bundle persistence.

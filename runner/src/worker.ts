@@ -27,6 +27,7 @@ import {
 import { type AppiumGate, openAppiumGate } from './appium-gate.ts'
 import { pinCatalog, type ScenarioPin } from './catalog.ts'
 import { config } from './config.ts'
+import { type AttemptTrace, attemptTrace } from './diagnostics.ts'
 import { scenarioIdentity, stageApp } from './input-files.ts'
 import { inputRuntime } from './input-runtime.ts'
 import { type LeaseGuard, watchLease } from './lease-guard.ts'
@@ -73,8 +74,10 @@ export async function runWorker(device: Device, shutdown = new AbortController()
   }
   try {
     while (!shutdown.aborted) {
+      let trace: AttemptTrace | undefined
       let current: Lease | null = null
       let guard: LeaseGuard | undefined
+      let ownsEvidence = false
       let publishing = false
       let stopped = true
       let phase: AttemptOrigin['phase'] = 'setup'
@@ -90,6 +93,8 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           }
           current = await lease(device.name, catalog.commits, session?.runId, shutdown)
           if (!current) continue
+          trace = attemptTrace(device, current)
+          gate.observe(trace.command)
           scenario = catalog.scenario(current.commit, current.scenarioId)
         } finally {
           catalog.release()
@@ -141,15 +146,20 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         ) {
           await prepared?.release()
           prepared = undefined
+          ownsEvidence = true
+          trace?.enter('session_reset')
           await resetApp(device, session)
         } else {
           phase = 'cleanup'
+          trace?.enter('cleanup')
           if (!(await cleanupSession())) throw new Error('previous session cleanup not confirmed')
           session = null
           headers = gate.activate(guard)
           phase = 'setup'
           sessionApp = prepared
           prepared = undefined
+          ownsEvidence = true
+          trace?.enter('session_start')
           session = await openSession(
             device,
             sessionApp ? { ...current, appBuild: sessionApp.path } : current,
@@ -157,13 +167,11 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           )
         }
         guard.check()
-        if (current.inputIntent)
-          await sendInputRuntime(
-            current.queueId,
-            device.name,
-            await inputRuntime(device, session.driver, guard.signal),
-            guard.signal,
-          )
+        if (current.inputIntent) {
+          const runtime = await inputRuntime(device, session.driver, guard.signal)
+          trace?.runtime(runtime)
+          await sendInputRuntime(current.queueId, device.name, runtime, guard.signal)
+        }
         // Staging and session startup can take minutes. A local edit during that interval
         // must fail before the executor imports source under the previously pinned identity.
         if (verifiedInputs)
@@ -180,6 +188,8 @@ export async function runWorker(device: Device, shutdown = new AbortController()
             },
             guard.signal,
           )
+        if (!trace) throw new Error('attempt diagnostics were not initialized')
+        trace.enter('executor_start')
         stopped = false // retain the checkout on an unexpected failure until exit is confirmed
         const execution = await runScenario(
           session.driver,
@@ -189,8 +199,18 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           gate,
           headers,
           scenario.file,
+          trace,
         )
         stopped = execution.stopped
+        Object.assign(
+          execution.result,
+          await trace.capture(
+            gate,
+            stopped && !guard.signal.aborted,
+            execution.result.status === 'failed',
+          ),
+        )
+        trace.enter('cleanup')
         let clean = stopped
         if (
           config.SESSION_MODE === 'fresh' ||
@@ -207,7 +227,11 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         // device/account reservation is released only after execution and cleanup are confirmed.
         const acknowledged = clean && (await acknowledge(current))
         publishing = true
-        const saved = await sendResult({ ...execution.result, cleanupComplete: clean })
+        const saved = await sendResult({
+          ...execution.result,
+          cleanupComplete: clean,
+          diagnostics: trace.finish(execution.result.error),
+        })
         if (!saved)
           log(
             device.name,
@@ -226,18 +250,34 @@ export async function runWorker(device: Device, shutdown = new AbortController()
             ? 'cancelled'
             : 'lease_lost'
           : null
+        const evidence =
+          current && trace && !publishing
+            ? await trace.capture(
+                ownsEvidence ? gate : null,
+                stopped && !!guard && !guard.signal.aborted,
+                true,
+              )
+            : {}
+        trace?.enter('cleanup')
         gate.stopCommands()
         const clean = (await cleanupSession()) && stopped
         guard?.stop()
         session = null
         if (current && clean) await acknowledge(current)
         if (current && !publishing)
-          await reportRunnerError(device, current, err, clean, {
-            phase,
-            failureKind:
-              interruption ??
-              (phase === 'setup' && gate.sessionUnavailable ? 'session_unavailable' : 'unknown'),
-          })
+          await reportRunnerError(
+            device,
+            current,
+            err,
+            clean,
+            {
+              phase,
+              failureKind:
+                interruption ??
+                (phase === 'setup' && gate.sessionUnavailable ? 'session_unavailable' : 'unknown'),
+            },
+            { ...evidence, diagnostics: trace?.finish(messageOf(err)) },
+          )
         if (!clean) {
           log(
             device.name,
@@ -265,6 +305,8 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         if (current && !current.cleanupRequired) return
         await pause(ERROR_PAUSE_MS, shutdown)
       } finally {
+        trace?.stop()
+        gate.observe(undefined)
         guard?.stop()
         await prepared?.release()
         if (stopped) scenario?.release()
@@ -376,6 +418,7 @@ async function reportRunnerError(
   err: unknown,
   cleanupComplete: boolean,
   origin: Pick<AttemptOrigin, 'phase' | 'failureKind'>,
+  evidence: Pick<import('@nowait/shared').ResultBody, 'screenshot' | 'log' | 'diagnostics'>,
 ) {
   await sendResult({
     queueId: lease.queueId,
@@ -383,6 +426,7 @@ async function reportRunnerError(
     status: 'failed',
     durationMs: 0,
     error: `runner error: ${messageOf(err)}`,
+    ...evidence,
     cleanupComplete,
     ...origin,
     scenarioStarted: false,

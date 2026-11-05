@@ -14,6 +14,7 @@ import {
   type Lease,
   matchesProfile,
   messageOf,
+  type ProgressBody,
   ResolvedInputs,
   type ResultBody,
   type RunDetail,
@@ -511,6 +512,8 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
       durationMs: results.durationMs,
       error: results.error,
       screenshot: results.screenshot,
+      diagnostics: sql<boolean>`${results.diagnostics} IS NOT NULL`,
+      progress: queue.progress,
       log: results.log,
       phase: sql<
         AttemptOrigin['phase']
@@ -757,6 +760,25 @@ export async function releaseLease(queueId: number, device: string) {
 // --- finishing attempts ----------------------------------------------------------------------
 
 // Returns false when the lease is no longer this device's (it expired and the scenario moved on).
+// Progress does not renew authority or count as scenario progress. Stale publishers cannot
+// overwrite a later snapshot or a completed attempt.
+export async function recordProgress(body: ProgressBody) {
+  const updated = await db
+    .update(queue)
+    .set({ progress: body.progress })
+    .where(
+      and(
+        eq(queue.id, body.queueId),
+        eq(queue.device, body.device),
+        eq(queue.status, 'leased'),
+        sql`${queue.leaseUntil} > now()`,
+        sql`COALESCE((${queue.progress}->>'revision')::integer, 0) < ${body.progress.revision}`,
+      ),
+    )
+    .returning({ id: queue.id })
+  return updated.length > 0
+}
+
 export async function submitResult(body: ResultBody) {
   const leasedHere = and(
     eq(queue.id, body.queueId),
@@ -790,11 +812,12 @@ export async function submitResult(body: ResultBody) {
   // which can name buckets and request ids, goes to the server log (`problems`).
   const upload = (file: string, data: Buffer | string) =>
     within(UPLOAD_SECONDS * 1000, saveArtifact(row.runId, file, data))
-  const [screenshot, log] = await Promise.allSettled([
+  const [screenshot, log, diagnostics] = await Promise.allSettled([
     body.screenshot && upload(`${name}.png`, Buffer.from(body.screenshot, 'base64')),
     body.log && upload(`${name}.log`, body.log),
+    body.diagnostics && upload(`${name}.diagnostics.json`, JSON.stringify(body.diagnostics)),
   ])
-  const failed = Object.entries({ screenshot, log }).flatMap(([file, r]) =>
+  const failed = Object.entries({ screenshot, log, diagnostics }).flatMap(([file, r]) =>
     r.status === 'rejected' ? [{ file, why: messageOf(r.reason) }] : [],
   )
   const problems = failed.map(({ file, why }) => `${file} not saved: ${why}`)
@@ -810,7 +833,11 @@ export async function submitResult(body: ResultBody) {
     // the lease may have run out while the files went up
     const [done] = await tx
       .update(queue)
-      .set({ status: 'done', ...(body.cleanupComplete ? { cleanupPending: false } : {}) })
+      .set({
+        status: 'done',
+        ...(body.diagnostics ? { progress: body.diagnostics.progress } : {}),
+        ...(body.cleanupComplete ? { cleanupPending: false } : {}),
+      })
       .where(leasedHere)
       .returning()
     if (!done) return false
@@ -820,6 +847,7 @@ export async function submitResult(body: ResultBody) {
       error,
       screenshot: kept(screenshot),
       log: kept(log),
+      diagnostics: kept(diagnostics),
       phase: body.phase,
       failureKind: body.failureKind,
       scenarioStarted: body.scenarioStarted,
@@ -1241,6 +1269,7 @@ type Outcome = Pick<
   scenarioStarted?: boolean | null
   screenshot?: string
   log?: string
+  diagnostics?: string
 }
 
 function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
@@ -1256,6 +1285,7 @@ function saveResult(tx: Tx, row: QueueRow, outcome: Outcome) {
     error: outcome.error,
     screenshot: outcome.screenshot,
     log: outcome.log,
+    diagnostics: outcome.diagnostics,
     phase:
       row.scenarioStarted && outcome.phase === 'setup' ? 'scenario' : (outcome.phase ?? 'unknown'),
     failureKind:
