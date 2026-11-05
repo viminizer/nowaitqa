@@ -1,0 +1,1 @@
+CREATE INDEX "runs_active_idx" ON "runs" USING btree ("id") WHERE status = 'running';

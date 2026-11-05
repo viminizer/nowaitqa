@@ -20,7 +20,7 @@ import {
   sendResult,
 } from './api.ts'
 import { type AppiumGate, openAppiumGate } from './appium-gate.ts'
-import { commits } from './catalog.ts'
+import { pinCatalog, type ScenarioPin } from './catalog.ts'
 import { config } from './config.ts'
 import { type LeaseGuard, watchLease } from './lease-guard.ts'
 import { log } from './log.ts'
@@ -56,9 +56,20 @@ export async function runWorker(device: Device, shutdown = new AbortController()
       let publishing = false
       let stopped = true
       let phase: AttemptOrigin['phase'] = 'setup'
+      let scenario: ScenarioPin | undefined
       try {
-        current = await lease(device.name, commits(), session?.runId, shutdown)
-        if (!current) continue
+        const catalog = pinCatalog()
+        try {
+          if (!catalog.commits.length) {
+            await pause(ERROR_PAUSE_MS, shutdown)
+            continue
+          }
+          current = await lease(device.name, catalog.commits, session?.runId, shutdown)
+          if (!current) continue
+          scenario = catalog.scenario(current.commit, current.scenarioId)
+        } finally {
+          catalog.release()
+        }
         if (!current.cleanupRequired)
           throw new Error('upgrade the server: cleanup acknowledgement protocol is required')
         guard = watchLease(device, current, shutdown)
@@ -79,7 +90,16 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           session = await openSession(device, current, gate)
         }
         guard.check()
-        const execution = await runScenario(session.driver, device, current, guard, gate, headers)
+        stopped = false // retain the checkout on an unexpected failure until exit is confirmed
+        const execution = await runScenario(
+          session.driver,
+          device,
+          current,
+          guard,
+          gate,
+          headers,
+          scenario.file,
+        )
         stopped = execution.stopped
         let clean = stopped
         if (
@@ -156,6 +176,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         await pause(ERROR_PAUSE_MS, shutdown)
       } finally {
         guard?.stop()
+        if (stopped) scenario?.release()
       }
     }
   } finally {

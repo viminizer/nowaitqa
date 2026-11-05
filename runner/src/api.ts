@@ -10,6 +10,7 @@ import {
   Lease,
   messageOf,
   type ResultBody,
+  RevisionPage,
   RunSummary,
 } from '@nowait/shared'
 import { z } from 'zod'
@@ -50,6 +51,39 @@ async function call(
 
 export async function sendCatalog(catalog: Catalog, signal?: AbortSignal) {
   await call('PUT', '/catalog', [204], catalog, 10_000, signal)
+}
+
+export async function referencedCommits(signal?: AbortSignal) {
+  const deadline = AbortSignal.timeout(30_000)
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline
+  const commits = new Set<string>()
+  const cleanup = new Set<string>()
+  let after = 0
+  while (true) {
+    let res: Response
+    try {
+      res = await call(
+        'GET',
+        `/catalog/revisions${after ? `?after=${after}` : ''}`,
+        [200],
+        undefined,
+        10_000,
+        combined,
+      )
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 404)
+        throw new Error('upgrade the server: scenario revision references are required')
+      throw err
+    }
+    const page = RevisionPage.parse(await res.json())
+    for (const revision of page.revisions) {
+      commits.add(revision.commit)
+      if (revision.cleanupPending) cleanup.add(revision.commit)
+    }
+    if (page.next === null) return { commits, cleanup }
+    if (page.next <= after) throw new Error('revision reference cursor did not advance')
+    after = page.next
+  }
 }
 
 export async function getDevices(signal?: AbortSignal) {

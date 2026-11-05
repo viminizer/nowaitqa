@@ -22,6 +22,13 @@ const Env = z.object({
     .default(fileURLToPath(new URL('../../examples/scenarios', import.meta.url))),
   SCENARIOS_REPO: z.string().min(1).optional(), // git URL the runner pulls every minute
   SCENARIOS_BRANCH: z.string().min(1).default('main'),
+  SCENARIO_CACHE_REVISIONS: z.coerce.number().int().min(2).max(100).default(10),
+  SCENARIO_CACHE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_048_576)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(5 * 1024 ** 3),
   SCENARIO_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),
   SESSION_MODE: z.enum(['reuse', 'fresh']).default('reuse'),
 })

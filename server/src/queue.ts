@@ -77,6 +77,27 @@ export async function saveCatalog(catalog: Catalog) {
     })
 }
 
+// Global catalog history is shared by runners. Include closed runs with unconfirmed cleanup,
+// whose orphaned executors may still read their checkout. Page runs, not individual queue items.
+export async function referencedRevisions(after = 0) {
+  const limit = 100
+  const found = await db.execute<{ id: number; commit: string; cleanupPending: boolean }>(sql`
+    SELECT r.id, r.commit, EXISTS (
+      SELECT 1 FROM ${queue} q WHERE q.run_id = r.id AND q.cleanup_pending
+    ) AS "cleanupPending"
+    FROM ${runs} r WHERE r.status = 'running' AND r.id > ${after}
+    UNION
+    SELECT r.id, r.commit, true AS "cleanupPending"
+    FROM ${queue} q JOIN ${runs} r ON r.id = q.run_id
+    WHERE q.cleanup_pending AND r.id > ${after}
+    ORDER BY id LIMIT ${limit + 1}`)
+  const rows = found.rows.slice(0, limit)
+  return {
+    revisions: rows.map(({ id, ...row }) => ({ runId: id, ...row })),
+    next: found.rows.length > limit ? (rows.at(-1)?.id ?? null) : null,
+  }
+}
+
 export class BadRunError extends Error {}
 
 export async function createRun(body: CreateRunBody) {
