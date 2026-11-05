@@ -401,8 +401,8 @@ export async function leaseNext(
 ): Promise<Lease | null> {
   signal.throwIfAborted()
   const lease = await db.transaction(async (tx) => {
-    // SHARE serializes with a health pause without blocking result inserts' FK KEY SHARE locks.
-    // A paused phone gets a retry delay, so its worker can release its idle Appium session.
+    // Serialize leases for this phone, including duplicate runner processes. NO KEY UPDATE
+    // still allows result inserts' FK KEY SHARE locks, and serializes with a health pause.
     const [found] = await tx
       .select({
         device: devices,
@@ -412,11 +412,20 @@ export async function leaseNext(
       .from(devices)
       .where(and(eq(devices.name, deviceName), eq(devices.enabled, true)))
       .limit(1)
-      .for('share')
+      .for('no key update')
     signal.throwIfAborted()
     if (!found) throw new UnknownDeviceError(`unknown or disabled device: ${deviceName}`)
     if (found.pauseSeconds > 0) throw new PausedDeviceError(found.pauseSeconds)
     const { device } = found
+
+    // Check after locking the phone, before reserving another job or account. Expiry/result
+    // handling must finish the old row before this phone can take more work.
+    const [busy] = await tx
+      .select({ id: queue.id })
+      .from(queue)
+      .where(and(eq(queue.device, device.name), eq(queue.status, 'leased')))
+      .limit(1)
+    if (busy) return null
 
     // The phone's current run first (a new run means a new session and app install), then the
     // oldest run. In a run, the longest scenario first, and one with no history yet before all:

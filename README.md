@@ -82,6 +82,12 @@ unless you pass `--address 127.0.0.1`).
 Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
 up new phones within a minute.
 
+The server gives each registered device at most one leased scenario attempt at a time, even
+when duplicate runner processes request work for it. Extra requests wait through the usual
+long poll until the current lease is finished, cancelled or expired. Different devices can
+still take work concurrently. This guards queue assignment; it does not terminate scenario
+code that continues after losing its lease.
+
 ### Session mode
 
 Set `SESSION_MODE` on the runner, then restart it. The setting applies to every device on that
