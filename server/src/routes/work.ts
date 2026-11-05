@@ -14,6 +14,7 @@ import {
   heartbeat,
   leaseNext,
   PausedDeviceError,
+  releaseLease,
   saveCatalog,
   submitResult,
   UnknownDeviceError,
@@ -52,6 +53,7 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
             req.body.commits,
             req.body.runId,
             controller.signal,
+            req.body.cleanup,
           )
           if (lease) return lease
           const left = deadline - Date.now()
@@ -77,6 +79,11 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/heartbeat', { schema: { body: HeartbeatBody } }, async (req, reply) => {
     const alive = await heartbeat(req.body.queueId, req.body.device)
     return alive ? reply.code(204).send() : reply.code(409).send({ error: 'lease is gone' })
+  })
+
+  app.post('/release', { schema: { body: HeartbeatBody } }, async (req, reply) => {
+    const released = await releaseLease(req.body.queueId, req.body.device)
+    return released ? reply.code(204).send() : reply.code(409).send({ error: 'lease is gone' })
   })
 
   app.post('/results', { schema: { body: ResultBody } }, async (req, reply) => {

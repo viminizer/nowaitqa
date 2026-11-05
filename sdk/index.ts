@@ -7,7 +7,11 @@ import type { Browser } from 'webdriverio'
 export type Scenario = {
   id: string
   platforms: ('android' | 'ios')[]
-  run: (driver: Browser, account: { username: string; password: string } | null) => Promise<void>
+  run: (
+    driver: Browser,
+    account: { username: string; password: string } | null,
+    context: { signal: AbortSignal },
+  ) => Promise<void>
 }
 
 // Every .ts file directly in dir is one scenario, and its id is the file name. Sub-folders

@@ -5,50 +5,54 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { every } from '@nowait/shared'
 import { loadScenarios, type Scenario } from '@nowait-qa/sdk'
 import { sendCatalog } from './api.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
 
 const exec = promisify(execFile)
+let catalogSignal: AbortSignal | undefined
 const git = async (cwd: string, ...args: string[]) =>
-  (await exec('git', args, { cwd })).stdout.trim()
+  (await exec('git', args, { cwd, signal: catalogSignal })).stdout.trim()
 
-type Version = { commit: string; scenarios: Map<string, Scenario> }
+type Version = { commit: string; dir: string; scenarios: Map<string, Scenario> }
 
 // Newest first. The previous version stays, so runs started before a pull can still finish.
 const versions: Version[] = []
 
 export const commits = () => versions.map((v) => v.commit)
 
-export const findScenario = (commit: string, id: string) =>
-  versions.find((v) => v.commit === commit)?.scenarios.get(id)
+export function findScenarioFile(commit: string, id: string) {
+  const version = versions.find((v) => v.commit === commit)
+  return version?.scenarios.has(id) ? join(version.dir, `${id}.ts`) : undefined
+}
 
-export async function startScenarios() {
+export async function startScenarios(signal?: AbortSignal) {
+  catalogSignal = signal
   if (!config.SCENARIOS_REPO) {
     return use(config.SCENARIOS_DIR, await git(config.SCENARIOS_DIR, 'rev-parse', 'HEAD'))
   }
   await mkdir(config.SCENARIOS_DIR, { recursive: true })
   await pull()
-  const again = () =>
-    setTimeout(
-      () =>
-        pull()
-          .catch((err) => log(config.HOST, 'could not update the scenarios', err))
-          .finally(again),
-      60_000,
-    )
-  again()
+  const stop = every(60_000, 'scenario catalog', pull, {
+    error: (err, message) => log(config.HOST, message, err),
+  })
+  signal?.addEventListener('abort', stop, { once: true })
+  if (signal?.aborted) stop()
 }
 
 async function use(dir: string, commit: string) {
   const scenarios = new Map((await loadScenarios(dir)).map((s) => [s.id, s]))
   // Tell the server first, so it has the list before any phone asks for work on this commit.
-  await sendCatalog({
-    commit,
-    scenarios: [...scenarios.values()].map(({ id, platforms }) => ({ id, platforms })),
-  })
-  versions.unshift({ commit, scenarios })
+  await sendCatalog(
+    {
+      commit,
+      scenarios: [...scenarios.values()].map(({ id, platforms }) => ({ id, platforms })),
+    },
+    catalogSignal,
+  )
+  versions.unshift({ commit, dir, scenarios })
   versions.length = Math.min(versions.length, 2)
   log(config.HOST, `using ${scenarios.size} scenarios at commit ${commit}`)
 }
@@ -71,6 +75,7 @@ async function pull() {
     // with build scripts; phones do not need them).
     await exec('pnpm', ['install', '--frozen-lockfile', '--config.strict-dep-builds=false'], {
       cwd: dir,
+      signal: catalogSignal,
     })
   }
   await use(dir, commit)

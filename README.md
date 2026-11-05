@@ -42,6 +42,7 @@ There are two tokens:
 | `PUT /catalog`          | runner       | Send its scenario list and their git commit (at startup)           |
 | `POST /lease`           | runner       | Take the next scenario. Waits up to 30s if there is none           |
 | `POST /heartbeat`       | runner       | Keep a lease alive while a scenario runs                           |
+| `POST /release`         | runner       | Confirm stopped execution and release a cleanup reservation        |
 | `POST /results`         | runner       | Report pass or fail, with a screenshot and a log                   |
 
 A failed scenario runs once more. A lease that is not kept alive runs out, and the scenario goes
@@ -85,8 +86,8 @@ up new phones within a minute.
 The server gives each registered device at most one leased scenario attempt at a time, even
 when duplicate runner processes request work for it. Extra requests wait through the usual
 long poll until the current lease is finished, cancelled or expired. Different devices can
-still take work concurrently. This guards queue assignment; it does not terminate scenario
-code that continues after losing its lease.
+still take work concurrently. Upgraded runners also isolate scenario execution and acknowledge
+cleanup before a cancelled or expired attempt's device and account become available again.
 
 ### Session mode
 
@@ -95,11 +96,72 @@ runner, on both Android and iOS Simulator:
 
 - `reuse` (default): reuse a session within a run and clear app data between scenarios.
 - `fresh`: open a new session, clear app data, run one scenario attempt, and close the session
-  after reporting its result. This adds session-startup overhead but helps diagnose session-state
+  before reporting its result. This adds session-startup overhead but helps diagnose session-state
   problems. Retries also get a new session.
 
 Failures and health pauses close sessions in both modes. Reuse also starts a new session when
 the run or the device's health-reset marker changes. Invalid settings stop the runner at startup.
+
+### Attempt termination and cleanup
+
+Upgrade the server before the runners. Existing runners retain their old lease protocol; restart
+all runners on the new version to get the termination and cleanup guarantees. New runners request
+`cleanup: true` when leasing and require the server's `cleanupRequired` acknowledgement before
+executing scenarios. The migration defaults old rows to no cleanup reservation.
+
+Upgraded runners require macOS or Linux, where owned POSIX process groups can be terminated.
+Every scenario attempt runs in a disposable Node process, including when Appium sessions are
+reused. Scenario module globals do not persist between attempts. The parent owns lease renewals
+and a loopback Appium gateway, so a CPU-bound scenario cannot block heartbeats. Commands check
+lease authority before reaching Appium. Parent and scenario connections use this gateway;
+scenario code must not create, reload or delete the parent-owned session.
+
+Executor startup has a 30-second limit, separate from `SCENARIO_TIMEOUT_SECONDS` (default 600).
+Timeout, cancellation, shutdown or a missed successful-renewal deadline stops new commands and
+signals the executor to stop. After 250 ms it is killed if necessary; exit confirmation gets at
+most five seconds. Ordinary child tools in the executor's process group are terminated too.
+Even a passing executor exits before its result is published, so forgotten timers cannot
+continue into the next attempt. Failure evidence is bounded at 15 seconds, and a
+session-delete request at 15 seconds. Capture trouble stays diagnostic and preserves the actual
+scenario outcome. Passing reuse-mode sessions may remain idle for the next scenario; failed and
+fresh-mode sessions are disposed of before reporting the outcome.
+
+Existing two-argument scenarios still work. A third argument gives cooperative cancellation:
+
+```ts
+async run(driver, account, { signal }) {
+  signal.throwIfAborted()
+  // Pass signal to any cancellable backend calls and stop when it is aborted.
+}
+```
+
+If execution exit or session disposal cannot be confirmed, the worker stops and the server keeps
+that attempt's device/account reservation. Cancellation and expiry may already have finished the
+run, but its resources remain unavailable. Phones shows **Cleanup required** with the run and
+attempt number. Turning a device off and on does not clear this reservation. Retries can use
+other eligible devices/accounts, while a run with no available resources still ends under the
+normal no-progress timeout.
+
+To recover, verify on the runner/Appium host that the old executor and its commands have stopped
+and its session is gone. Interrupted session creation needs particular care: Appium may create a
+session after the client disconnected. Confirm that request has settled and remove any orphaned
+session for this device; keep the reservation if this cannot be verified. Then acknowledge the
+specific attempt, using the runner token:
+
+```bash
+curl -X POST "$SERVER_URL/release" \
+  -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"queueId":123,"device":"phone-a"}'
+```
+
+This request is idempotent. A still-leased row remains busy until completion or expiry. A result's
+`cleanupComplete: true` can also release its reservation; the runner sends it only after cleanup
+is confirmed. These are trusted-runner acknowledgements, not a sandbox for hostile scenario code.
+Do not clear a reservation merely because a run has ended or a process stopped reporting contact.
+After a hard runner/host crash, verify descendant processes as well as Appium before acknowledging.
+Scenario code must not detach subprocesses from the owned group; such external processes need
+explicit cleanup by the scenario author. Already accepted external/backend operations cannot be undone by terminating JavaScript; use
+idempotent test-environment operations for those effects.
 
 ### Device health
 

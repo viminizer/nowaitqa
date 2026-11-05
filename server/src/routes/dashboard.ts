@@ -72,7 +72,7 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // Every phone on every machine: bounded by the hardware, so not paged (R24 exception).
   app.get('/dashboard/api/devices', { schema: { response: { 200: DeviceList } } }, async () => {
-    // Both read through an index (queue_leased_idx, results_device_idx), not the whole history.
+    // Active/held rows use queue_leased_idx + queue_cleanup_idx; last work uses results_device_idx.
     const [phones, leased] = await Promise.all([
       db
         .select({
@@ -92,14 +92,30 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(devices)
         .orderBy(devices.name),
       db
-        .select({ device: queue.device, runId: queue.runId, scenarioId: queue.scenarioId })
+        .select({
+          device: queue.device,
+          runId: queue.runId,
+          scenarioId: queue.scenarioId,
+          queueId: queue.id,
+          status: queue.status,
+          cleanupPending: queue.cleanupPending,
+        })
         .from(queue)
-        .where(eq(queue.status, 'leased')),
+        .where(sql`${queue.status} = 'leased' or ${queue.cleanupPending}`),
     ])
     return {
       devices: phones.map((phone) => {
-        const busy = leased.find((l) => l.device === phone.name)
-        return { ...phone, busy: busy ? { runId: busy.runId, scenarioId: busy.scenarioId } : null }
+        const busy = leased.find((l) => l.device === phone.name && l.status === 'leased')
+        const cleanup = leased.find(
+          (l) => l.device === phone.name && l.status === 'done' && l.cleanupPending,
+        )
+        return {
+          ...phone,
+          busy: busy ? { runId: busy.runId, scenarioId: busy.scenarioId } : null,
+          cleanup: cleanup
+            ? { queueId: cleanup.queueId, runId: cleanup.runId, scenarioId: cleanup.scenarioId }
+            : null,
+        }
       }),
     }
   })

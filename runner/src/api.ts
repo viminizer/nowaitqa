@@ -48,12 +48,19 @@ async function call(
   return res
 }
 
-export async function sendCatalog(catalog: Catalog) {
-  await call('PUT', '/catalog', [204], catalog)
+export async function sendCatalog(catalog: Catalog, signal?: AbortSignal) {
+  await call('PUT', '/catalog', [204], catalog, 10_000, signal)
 }
 
-export async function getDevices() {
-  const res = await call('GET', `/devices?host=${encodeURIComponent(config.HOST)}`, [200])
+export async function getDevices(signal?: AbortSignal) {
+  const res = await call(
+    'GET',
+    `/devices?host=${encodeURIComponent(config.HOST)}`,
+    [200],
+    undefined,
+    10_000,
+    signal,
+  )
   return z.array(Device).parse(await res.json())
 }
 
@@ -89,8 +96,20 @@ export class DevicePausedError extends Error {
 }
 
 // Waits up to 30s on the server. null = no work right now.
-export async function lease(device: string, commits: string[], runId?: number) {
-  const res = await call('POST', '/lease', [200, 204, 404, 423], { device, commits, runId })
+export async function lease(
+  device: string,
+  commits: string[],
+  runId?: number,
+  signal?: AbortSignal,
+) {
+  const res = await call(
+    'POST',
+    '/lease',
+    [200, 204, 404, 423],
+    { device, commits, runId, cleanup: true },
+    35_000,
+    signal,
+  )
   if (res.status === 423) {
     throw new DevicePausedError(DevicePause.parse(await res.json()).retryAfterSeconds)
   }
@@ -100,8 +119,18 @@ export async function lease(device: string, commits: string[], runId?: number) {
 }
 
 // false = the lease is gone (it expired and the scenario moved on).
-export async function heartbeat(queueId: number, device: string) {
-  const res = await call('POST', '/heartbeat', [204, 409], { queueId, device })
+export async function heartbeat(
+  queueId: number,
+  device: string,
+  signal?: AbortSignal,
+  timeoutMs = 5_000,
+) {
+  const res = await call('POST', '/heartbeat', [204, 409], { queueId, device }, timeoutMs, signal)
+  return res.status === 204
+}
+
+export async function releaseLease(queueId: number, device: string) {
+  const res = await call('POST', '/release', [204, 409], { queueId, device }, 10_000)
   return res.status === 204
 }
 
