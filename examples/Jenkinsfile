@@ -4,11 +4,12 @@
 //
 // Needs in Jenkins:
 // - a "Secret text" credential with id 'nowait-trigger-token' holding the server's TRIGGER_TOKEN
-// - curl on the agent
+// - curl and Node.js on the agent
 pipeline {
   agent any
 
   parameters {
+    choice(name: 'RELEASE_POLICY', choices: ['permissive', 'strict'], description: 'Saved release policy for this run')
     booleanParam(
       name: 'WAIT_FOR_RESULT',
       defaultValue: true,
@@ -42,20 +43,20 @@ pipeline {
               # No commit: the run uses the scenarios the runner sent last. Add "commit" to pin one.
               RUN=$(curl -sf -X POST "$NOWAIT_URL/runs" \
                 -H "Authorization: Bearer $NOWAIT_TOKEN" -H "Content-Type: application/json" \
-                -d "{\\"platform\\":\\"android\\",\\"appBuild\\":\\"$APK_URL\\",\\"trigger\\":\\"jenkins $JOB_NAME #$BUILD_NUMBER\\"}")
+                -d "{\\"platform\\":\\"android\\",\\"appBuild\\":\\"$APK_URL\\",\\"releasePolicy\\":\\"$RELEASE_POLICY\\",\\"trigger\\":\\"jenkins $JOB_NAME #$BUILD_NUMBER\\"}")
               RUN_ID=$(echo "$RUN" | sed 's/.*"id":\\([0-9]*\\).*/\\1/')
               echo "nowait-qa run $RUN_ID started"
               [ "$WAIT_FOR_RESULT" = true ] || exit 0
 
-              # The first "status" in the answer is the run's own status.
+              # Consume the server's saved gate; raw execution status still reports retries.
               while true; do
-                STATUS=$(curl -sf -H "Authorization: Bearer $NOWAIT_TOKEN" "$NOWAIT_URL/runs/$RUN_ID" \
-                  | grep -o '"status":"[a-z]*"' | head -1 | cut -d'"' -f4)
-                [ "$STATUS" = running ] || break
+                RESPONSE=$(curl -sf -H "Authorization: Bearer $NOWAIT_TOKEN" "$NOWAIT_URL/runs/$RUN_ID")
+                GATE=$(printf '%s' "$RESPONSE" | node -e 'let text="";process.stdin.on("data",d=>text+=d);process.stdin.on("end",()=>{const r=JSON.parse(text);if(!r.release)throw Error("upgrade server: release gate unavailable");console.log(r.release.gate.status)})')
+                [ "$GATE" = pending ] || break
                 sleep 30
               done
-              echo "nowait-qa run $RUN_ID: $STATUS"
-              [ "$STATUS" = passed ]
+              echo "nowait-qa run $RUN_ID release gate: $GATE"
+              [ "$GATE" = accepted ]
             '''
           }
         }

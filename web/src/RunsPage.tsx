@@ -14,6 +14,7 @@ function StartRun() {
         path: '/runs',
         body: {
           platform: fields.get('platform'),
+          releasePolicy: fields.get('releasePolicy'),
           profiles: String(fields.get('versions') ?? '')
             .split(',')
             .map((v) => v.trim())
@@ -58,6 +59,13 @@ function StartRun() {
             placeholder="/builds/app.apk or https://example.com/app.zip"
             aria-describedby="start-build-help"
           />
+        </label>
+        <label htmlFor="start-release-policy">
+          Release policy
+          <select id="start-release-policy" name="releasePolicy" defaultValue="permissive">
+            <option value="permissive">Permissive — accept later-pass recovery</option>
+            <option value="strict">Strict — reject flaky scenarios</option>
+          </select>
         </label>
         <label htmlFor="start-versions">
           Required OS versions (optional)

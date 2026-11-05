@@ -701,3 +701,59 @@ cannot manage fixtures. Retry requires `{ "confirmedStopped": true }`; finish re
 opaque claim and confirmed child termination before accepting verified cleanup. Upgrade the
 server and all relevant runners before adopting fixtures; old servers still support ordinary scenarios, and managed setup
 fails explicitly before provisioning when the fixture protocol is absent.
+
+### Release gates and scenario reliability
+
+Execution results keep their existing meaning: a failed-then-passed application attempt is
+`flaky`, and a run can finish `passed` after recovery. A release gate records whether those
+results satisfy the policy selected when the run starts:
+
+```json
+{ "platform": "android", "appBuild": "/builds/app.apk", "releasePolicy": "strict" }
+```
+
+`releasePolicy` defaults to `permissive`, which accepts later-pass recovery. `strict` rejects
+flaky required scenarios. Both reject failed or missing required coverage. Policies do not
+change retries, raw results or assertion classification. Fixture cleanup health remains separate. The dashboard's start form exposes
+both policies; a run page shows its gate separately from execution status.
+
+`GET /runs/:id` and its dashboard equivalent return `release.gate` with `policy`, `status`
+(`pending`, `accepted`, `rejected`), `reason` and scenario counts. The effective policy is saved
+at creation, and the terminal decision is saved atomically with run completion, including
+cancellation, lost-device and missing-profile paths. Server restarts cannot change it. CI should
+wait until the gate is no longer `pending`, then require `accepted`; the Jenkins example does
+this and needs curl and Node.js on its agent. Its `RELEASE_POLICY` parameter defaults to
+permissive. A server without this field fails the new example with an upgrade message.
+Legacy consumers may continue using the unchanged top-level `status` if they intentionally
+want the old execution-only check.
+
+Runs created before this feature have `release.source: "legacy"`: their permissive decision is
+derived and explicitly labelled, not presented as a saved historical policy. New runs use
+`source: "saved"`; a missing terminal saved decision rejects rather than inferring acceptance.
+Reruns inherit the saved policy and link to their parent through `release.rerunOf`, preserving
+original history. Failed-only and single-attempt reruns are marked `partialCoverage` and cannot
+certify a full release. Re-running such a subset stays partial; start a new full run for a
+release decision. Known-failure exceptions and silent scenario exclusions are not supported.
+
+The **Reliability** page and `GET /history` (or `/dashboard/api/history`) provide paginated
+scenario history. Supply `scenarioId`, `platform`, and optional `days` (7, 30 or 90; default 30).
+The default window uses the database clock, like run timestamps. The response gives `from`, `until`, up to 50 cohort entries and a `next` cursor. Send that cursor
+as `after` and preserve the returned `until` on subsequent pages to keep the same completed-run
+window. Trigger tokens may read this history; dashboard authentication uses its existing rules.
+
+Each entry aggregates the whole window for one exact cohort of scenario commit, verified app
+and source/dependency bytes, effective configuration, queue/fixed split, required profile, saved retry/recovery limits, full/subset scope and
+observed runtime identities. Sample counts refer to scenario slots, not retries. Different
+builds/environments remain separate. Incomplete, legacy or mixed-runtime identities are visibly
+isolated to their own run and do not receive a comparable reliability percentage. Latest-run
+links expose the original attempts; pagination never changes a cohort's sample denominator.
+
+History distinguishes first completed application passes, later application passes, exhausted
+application failures, application failures with interrupted recovery, infrastructure-only terminal interruptions, unknown outcomes and the
+number of infrastructure interruptions across attempts. An infrastructure interruption is
+not an application assertion failure. The first application-pass percentage uses first passes,
+later passes, exhausted application failures and interrupted application failures as its denominator; infrastructure-only and
+unknown outcomes are excluded, with all counts shown. Raw flaky sample counts remain visible,
+including conservative retry classification after infrastructure interruptions. Gate decisions
+continue to use those raw scenario outcomes. History does not automatically quarantine tests,
+change release policy, or rewrite failed-only reruns into the original run.

@@ -9,6 +9,7 @@ import {
   type CreateRunBody,
   countStatuses,
   type ExecutionProfile,
+  evaluateReleaseGate,
   FIXTURE_CLAIM_SECONDS,
   type FixtureClaimBody,
   type FixtureFinishBody,
@@ -25,11 +26,14 @@ import {
   matchesProfile,
   messageOf,
   type ProgressBody,
+  type ReleasePolicy,
   ResolvedInputs,
   type ResultBody,
   type RunDetail,
   type RunList,
   type RunSummary,
+  ScenarioHistoryPage,
+  type ScenarioHistoryQuery,
   type ScenarioStatus,
   virtualDeviceClass,
 } from '@nowait/shared'
@@ -178,6 +182,9 @@ export async function createRun(body: CreateRunBody) {
 type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'> & {
   expectedInputs?: ResolvedInputs
   profiles?: ExecutionProfile[]
+  releasePolicy: ReleasePolicy
+  rerunOf?: number
+  partialCoverage?: boolean
 }
 type RunSlot = { scenarioId: string; profile: ExecutionProfile | null }
 
@@ -367,6 +374,14 @@ export async function listRuns(before?: number): Promise<RunList> {
     runs: page.map((run) => ({
       ...run,
       recovery: recoveryOf(run),
+      release: releaseOf(
+        run,
+        countStatuses(
+          (byRun.get(run.id) ?? []).map((a) =>
+            scenarioStatus(run, a.attempt, a.result, a.queueStatus),
+          ),
+        ),
+      ),
       durationMs: runDuration(run),
       counts: countStatuses(
         (byRun.get(run.id) ?? []).map((a) =>
@@ -406,8 +421,8 @@ export async function getRun(id: number): Promise<RunSummary | null> {
 
 // Each scenario of the run (catalog x repeat), in order, with its status from its latest attempt.
 // Jenkins needs them all, so not paged.
-async function scenariosOf(run: Run) {
-  const latest = await db
+async function scenariosOf(run: Run, connection: Tx | typeof db = db) {
+  const latest = await connection
     .selectDistinctOn([queue.slot], {
       scenarioId: queue.scenarioId,
       profile: queue.profile,
@@ -436,6 +451,24 @@ async function scenariosOf(run: Run) {
         }
       : null,
   }))
+}
+
+function releaseOf(
+  run: Pick<Run, 'releasePolicy' | 'releaseGate' | 'partialCoverage' | 'rerunOf' | 'status'>,
+  counts: ReturnType<typeof countStatuses>,
+) {
+  const policy = run.releasePolicy ?? 'permissive'
+  const gate =
+    run.releaseGate ??
+    (run.releasePolicy && run.status !== 'running'
+      ? { policy, status: 'rejected' as const, reason: 'decision_unavailable' as const, counts }
+      : evaluateReleaseGate(policy, run.status, counts, !run.partialCoverage))
+  return {
+    gate,
+    source: run.releasePolicy ? ('saved' as const) : ('legacy' as const),
+    partialCoverage: run.partialCoverage,
+    rerunOf: run.rerunOf,
+  }
 }
 
 async function summarize(run: Run): Promise<RunSummary> {
@@ -472,6 +505,7 @@ async function summarize(run: Run): Promise<RunSummary> {
     : []
   return {
     ...run,
+    release: releaseOf(run, countStatuses(scenarios.map((s) => s.status))),
     inputManifest: {
       intent: run.inputIntent,
       expected: run.expectedInputs,
@@ -1090,7 +1124,7 @@ export async function cancelRun(runId: number) {
 
 // A finished run, started again as a new run with the same build, commit and split. The old run
 // keeps its results (chat and Jenkins already have them).
-async function startAgain(run: Run, items: RunSlot[], trigger: string) {
+async function startAgain(run: Run, items: RunSlot[], trigger: string, partialCoverage: boolean) {
   if (run.status === 'running') throw new BadRunError(`run #${run.id} is still running`)
   if (items.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
   if (!run.inputIntent || !run.resolvedInputs)
@@ -1103,6 +1137,9 @@ async function startAgain(run: Run, items: RunSlot[], trigger: string) {
       commit,
       split,
       trigger,
+      releasePolicy: run.releasePolicy ?? 'permissive',
+      rerunOf: run.id,
+      partialCoverage: run.partialCoverage || partialCoverage,
       expectedInputs: run.resolvedInputs,
       profiles: run.profiles ?? [],
     },
@@ -1215,7 +1252,7 @@ export async function runAgain(runId: number, failedOnly: boolean) {
     .filter((s) => !failedOnly || s.status === 'failed')
     .map((s) => ({ scenarioId: s.id, profile: s.profile }))
   const what = failedOnly ? 'failed scenarios' : 'all scenarios'
-  return startAgain(run, ids, `dashboard: ${what} of run #${runId}`)
+  return startAgain(run, ids, `dashboard: ${what} of run #${runId}`, failedOnly)
 }
 
 // One failed attempt's scenario, as a new run. Null when there is no such attempt.
@@ -1234,7 +1271,12 @@ export async function retryAttempt(queueId: number) {
   if (!found) return null
   if (found.result !== 'failed') throw new BadRunError('only a failed attempt can run again')
   const trigger = `dashboard: ${found.scenarioId} of run #${found.run.id}`
-  return startAgain(found.run, [{ scenarioId: found.scenarioId, profile: found.profile }], trigger)
+  return startAgain(
+    found.run,
+    [{ scenarioId: found.scenarioId, profile: found.profile }],
+    trigger,
+    true,
+  )
 }
 
 // Turns a phone on or off. A phone that is off finishes its current attempt and takes no more,
@@ -1424,11 +1466,7 @@ async function finishRunIfDone(tx: Tx, runId: number) {
   // NO KEY UPDATE, not UPDATE: the result this transaction just saved points to the run, which
   // puts a KEY SHARE lock on it, and so did the other attempt's. FOR UPDATE waits on that lock
   // from both sides (a deadlock); NO KEY UPDATE doesn't, and two of them still take turns.
-  const [run] = await tx
-    .select({ status: runs.status })
-    .from(runs)
-    .where(eq(runs.id, runId))
-    .for('no key update')
+  const [run] = await tx.select().from(runs).where(eq(runs.id, runId)).for('no key update')
   // already finished (a cancel or stuck close that raced the last result): keep its end as it is
   if (run?.status !== 'running') return
 
@@ -1445,9 +1483,30 @@ async function finishRunIfDone(tx: Tx, runId: number) {
         SELECT 1 FROM ${queue} q2 JOIN ${results} r ON r.queue_id = q2.id
         WHERE q2.run_id = ${runId} AND q2.slot = q.slot AND r.status = 'passed')
     LIMIT 1`)
+  const status = failed.rows.length > 0 ? ('failed' as const) : ('passed' as const)
+  const scenarios = await scenariosOf({ ...run, status }, tx)
+  const expected = run.inputIntent?.scenarios ?? []
+  const counts = countStatuses(scenarios.map((s) => s.status))
+  const actual = scenarios.map((s) => s.id).sort()
+  const sameScenarios =
+    expected.length === scenarios.length && [...expected].sort().every((id, i) => id === actual[i])
+  const complete =
+    !run.partialCoverage &&
+    sameScenarios &&
+    (run.profiles ?? []).every(
+      (p) =>
+        scenarios.filter((s) => s.profile?.name === p.name).length ===
+        expected.length / (run.profiles?.length || 1),
+    )
   await tx
     .update(runs)
-    .set({ status: failed.rows.length > 0 ? 'failed' : 'passed', finishedAt: sql`now()` })
+    .set({
+      status,
+      finishedAt: sql`now()`,
+      releaseGate: run.releasePolicy
+        ? evaluateReleaseGate(run.releasePolicy, status, counts, complete)
+        : null,
+    })
     .where(eq(runs.id, runId))
 }
 
@@ -1746,4 +1805,89 @@ export async function deleteOldFixtureRecords() {
     )
     if (old.length < 1000) return
   }
+}
+
+// Aggregate the entire selected finished-run window before paging cohorts. A slot is one
+// sample, not one retry. Unknown/mixed evidence is isolated per run, never silently comparable.
+export async function scenarioHistory(query: ScenarioHistoryQuery): Promise<ScenarioHistoryPage> {
+  // Run/result timestamps come from Postgres; the runner/server host clock may drift.
+  const end =
+    query.until ?? (await db.execute<{ now: string }>(sql`SELECT now() AS now`)).rows[0]?.now
+  if (!end) throw new Error('database clock unavailable for history window')
+  const until = ScenarioHistoryPage.shape.until.parse(end)
+  const from = new Date(until.getTime() - query.days * 86_400_000)
+  const rows = await db.execute<{ entry: ScenarioHistoryPage['entries'][number] }>(sql`
+    WITH attempts AS (
+      SELECT q.*, r.commit, r.split, r.resolved_inputs, r.max_attempts, r.max_infrastructure_recoveries, r.max_run_infrastructure_recoveries, r.partial_coverage, r.finished_at AS run_finished,
+        res.status AS result_status, res.created_at AS result_at,
+        res.status = 'failed' AND res.phase = 'scenario' AND res.scenario_started
+          AND res.failure_kind IN ('assertion','scenario_error','timeout') AS application_failure,
+        res.status = 'failed' AND res.failure_kind IN
+          ('session_unavailable','lease_lost','cancelled','run_stuck','executor_error') AS infrastructure_failure,
+        row_number() OVER (PARTITION BY q.run_id, q.slot ORDER BY q.attempt DESC) AS newest
+      FROM ${queue} q JOIN ${runs} r ON r.id = q.run_id
+      LEFT JOIN ${results} res ON res.queue_id = q.id
+      WHERE q.scenario_id = ${query.scenarioId} AND r.platform = ${query.platform}
+        AND r.status <> 'running' AND r.finished_at >= ${from} AND r.finished_at <= ${until}
+    ), slots AS (
+      SELECT run_id, slot, commit, split, resolved_inputs, profile, max_attempts, max_infrastructure_recoveries, max_run_infrastructure_recoveries, partial_coverage,
+        max(result_status) FILTER (WHERE newest = 1) AS latest_status,
+        max(scenario_attempt) FILTER (WHERE newest = 1) AS scenario_attempt,
+        bool_or(application_failure) FILTER (WHERE newest = 1) AS latest_application_failure,
+        bool_or(infrastructure_failure) FILTER (WHERE newest = 1) AS latest_infrastructure_failure,
+        count(*) FILTER (WHERE infrastructure_failure) AS interruptions,
+        count(*) FILTER (WHERE application_failure) AS application_failures,
+        count(*) FILTER (WHERE result_status = 'failed' AND NOT coalesce(application_failure, false)
+          AND NOT coalesce(infrastructure_failure, false)) AS unknown_failures,
+        coalesce(min(result_at), min(leased_at), max(run_finished)) AS first_at,
+        coalesce(max(result_at), max(run_finished)) AS last_at,
+        count(DISTINCT coalesce(input_runtime, 'null'::jsonb)) AS runtime_count,
+        (array_agg(input_runtime ORDER BY attempt) FILTER (WHERE input_runtime IS NOT NULL))[1] AS runtime,
+        md5(string_agg(DISTINCT coalesce(input_runtime::text, 'null'), '|' ORDER BY coalesce(input_runtime::text, 'null'))) AS runtime_key,
+        bool_and(inputs_verified) AS verified
+      FROM attempts
+      GROUP BY run_id, slot, commit, split, resolved_inputs, profile, max_attempts, max_infrastructure_recoveries, max_run_infrastructure_recoveries, partial_coverage
+    ), identified AS (
+      SELECT *,
+        resolved_inputs IS NOT NULL AND max_attempts IS NOT NULL AND max_infrastructure_recoveries IS NOT NULL AND max_run_infrastructure_recoveries IS NOT NULL AND verified
+          AND runtime_count = 1 AND runtime IS NOT NULL
+          AND runtime->>'appium' IS NOT NULL AND runtime->>'automation' IS NOT NULL
+          AND runtime->>'driver' IS NOT NULL AND runtime->>'platformVersion' IS NOT NULL AS comparable,
+        CASE WHEN runtime_count > 1 THEN 'mixed' WHEN runtime IS NULL THEN 'unknown' ELSE 'verified' END AS runtime_state,
+        CASE WHEN latest_status = 'passed' THEN CASE WHEN application_failures > 0 THEN 'later' WHEN scenario_attempt = 1 OR (interruptions > 0 AND unknown_failures = 0) THEN 'first' ELSE 'unknown' END
+          WHEN latest_application_failure THEN 'application'
+          WHEN application_failures > 0 THEN 'interrupted_application'
+          WHEN latest_infrastructure_failure THEN 'infrastructure'
+          ELSE 'unknown' END AS outcome
+      FROM slots
+    ), keyed AS (
+      SELECT *, CASE WHEN runtime_state = 'verified' THEN runtime END AS display_runtime, md5(jsonb_build_object('scenario', ${query.scenarioId}::text, 'platform', ${query.platform}::text, 'commit', commit, 'split', split, 'inputs', resolved_inputs,
+        'profile', profile, 'runtime', runtime_key, 'partialCoverage', partial_coverage, 'recovery', jsonb_build_object('maxAttempts', max_attempts, 'maxInfrastructureRecoveries', max_infrastructure_recoveries, 'maxRunInfrastructureRecoveries', max_run_infrastructure_recoveries), 'unknownRun', CASE WHEN NOT comparable THEN run_id END)::text) AS key
+      FROM identified
+    ), cohorts AS (
+      SELECT key, jsonb_build_object(
+        'key', key, 'commit', commit, 'split', split, 'inputs', resolved_inputs, 'profile', profile,
+        'runtime', display_runtime, 'runtimeState', runtime_state,
+        'comparable', comparable, 'partialCoverage', partial_coverage,
+        'recovery', CASE WHEN max_attempts IS NOT NULL AND max_infrastructure_recoveries IS NOT NULL AND max_run_infrastructure_recoveries IS NOT NULL THEN jsonb_build_object('maxAttempts', max_attempts, 'maxInfrastructureRecoveries', max_infrastructure_recoveries, 'maxRunInfrastructureRecoveries', max_run_infrastructure_recoveries) END,
+        'latestRunId', max(run_id),
+        'firstObserved', min(first_at), 'lastObserved', max(last_at), 'samples', count(*),
+        'firstPass', count(*) FILTER (WHERE outcome = 'first'),
+        'laterPass', count(*) FILTER (WHERE outcome = 'later'),
+        'applicationFailure', count(*) FILTER (WHERE outcome = 'application'),
+        'interruptedApplication', count(*) FILTER (WHERE outcome = 'interrupted_application'),
+        'infrastructureOnly', count(*) FILTER (WHERE outcome = 'infrastructure'),
+        'unknown', count(*) FILTER (WHERE outcome = 'unknown'),
+        'rawFlaky', count(*) FILTER (WHERE latest_status = 'passed' AND scenario_attempt > 1),
+        'infrastructureInterruptions', sum(interruptions)
+      ) AS entry
+      FROM keyed GROUP BY key, commit, split, resolved_inputs, profile, display_runtime, runtime_state, comparable, partial_coverage, max_attempts, max_infrastructure_recoveries, max_run_infrastructure_recoveries
+    ) SELECT entry FROM cohorts WHERE ${query.after ? sql`key > ${query.after}` : sql`true`}
+    ORDER BY key LIMIT 51`)
+  return ScenarioHistoryPage.parse({
+    from,
+    until,
+    entries: rows.rows.slice(0, 50).map((r) => r.entry),
+    next: rows.rows.length > 50 ? rows.rows[49]?.entry.key : null,
+  })
 }

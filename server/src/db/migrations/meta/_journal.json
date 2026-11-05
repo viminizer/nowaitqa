@@ -141,6 +141,13 @@
       "when": 1793882836765,
       "tag": "0019_acoustic_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793890542476,
+      "tag": "0020_far_daimon_hellstrom",
+      "breakpoints": true
     }
   ]
 }

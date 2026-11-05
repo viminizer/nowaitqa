@@ -53,12 +53,18 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error?: 
   }
 }
 
+const statusStyle: Record<string, string> = {
+  cleaned: 'passed',
+  quarantined: 'failed',
+  cleaning: 'leased',
+  accepted: 'passed',
+  rejected: 'failed',
+}
+
 // A run, scenario, attempt or phone status. A leased attempt is one a phone is running now.
 export function Status({ status }: { status: string }) {
   return (
-    <span
-      className={`status status-${status === 'cleaned' ? 'passed' : status === 'quarantined' ? 'failed' : status === 'cleaning' ? 'leased' : status}`}
-    >
+    <span className={`status status-${statusStyle[status] ?? status}`}>
       {status === 'leased' ? 'running' : status === 'waiting' ? 'waiting for runner' : status}
     </span>
   )

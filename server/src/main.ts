@@ -27,7 +27,7 @@ app.setSerializerCompiler(serializerCompiler)
 
 // Every route except /health needs a token or the dashboard password (R22). A leaked trigger token
 // (Jenkins) can start runs, but cannot take work or report fake results.
-const TRIGGER_ROUTES = ['/runs', '/runs/:id', '/runs/:id/manifest']
+const TRIGGER_ROUTES = ['/runs', '/runs/:id', '/runs/:id/manifest', '/history']
 const matches = (given: string, expected: string) => {
   const a = Buffer.from(given)
   const b = Buffer.from(expected)
