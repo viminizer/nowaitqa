@@ -21,6 +21,7 @@ function AddDevice() {
           appiumUrl: value('appiumUrl'),
           host: value('host'),
           systemPort: Number(value('systemPort')),
+          platformVersion: value('platformVersion') || null,
         },
       },
       { onSuccess: () => form.reset() },
@@ -63,6 +64,19 @@ function AddDevice() {
           />
           <span className="muted" id="device-udid-help">
             Android serial from adb devices, or Simulator UUID from xcrun simctl list devices.
+          </span>
+        </label>
+        <label htmlFor="device-version">
+          OS version for required coverage (optional)
+          <input
+            id="device-version"
+            name="platformVersion"
+            placeholder="16 or 18.5"
+            aria-describedby="device-version-help"
+          />
+          <span className="muted" id="device-version-help">
+            Use the exact version reported by Appium. Required profiles verify it again before
+            execution.
           </span>
         </label>
         <label htmlFor="device-host">
@@ -196,7 +210,10 @@ export function DevicesPage() {
                         )}
                       </td>
                       <td>{time(d.lastWorkAt)}</td>
-                      <td>{d.platform}</td>
+                      <td>
+                        {d.platform}
+                        <p className="muted">{d.platformVersion ?? 'OS version not set'}</p>
+                      </td>
                       <td>{d.host}</td>
                       <td>
                         <code>{d.udid}</code>

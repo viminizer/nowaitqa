@@ -7,10 +7,12 @@ import {
   type Catalog,
   type CreateRunBody,
   countStatuses,
+  type ExecutionProfile,
   FullCommit,
   InputRuntime,
   inputSource,
   type Lease,
+  matchesProfile,
   messageOf,
   ResolvedInputs,
   type ResultBody,
@@ -18,6 +20,7 @@ import {
   type RunList,
   type RunSummary,
   type ScenarioStatus,
+  virtualDeviceClass,
 } from '@nowait/shared'
 import {
   and,
@@ -129,12 +132,17 @@ export async function createRun(body: CreateRunBody) {
     throw new BadRunError(`no ${body.platform} scenarios at commit ${catalog.commit}`)
   }
   const items = Array.from({ length: body.repeat }, () => scenarioIds).flat()
-  return insertRun({ ...body, commit: catalog.commit }, items)
+  const slots = body.profiles.length
+    ? body.profiles.flatMap((profile) => items.map((scenarioId) => ({ scenarioId, profile })))
+    : items.map((scenarioId) => ({ scenarioId, profile: null }))
+  return insertRun({ ...body, commit: catalog.commit }, slots)
 }
 
 type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'> & {
   expectedInputs?: ResolvedInputs
+  profiles?: ExecutionProfile[]
 }
+type RunSlot = { scenarioId: string; profile: ExecutionProfile | null }
 
 // How long each scenario usually takes on a platform: the average of its last EXPECTED_FROM
 // passing attempts. Failed ones don't count: a failure can stop early or run into a timeout.
@@ -157,41 +165,49 @@ async function expectedTimes(platform: Run['platform'], scenarioIds: string[]) {
 
 // Saves a run and queues its items (scenario ids, in order), then wakes waiting phones. Each item
 // gets its scenario's expected time, so phones take the longest first (leaseNext).
-async function insertRun(newRun: NewRun, items: string[]) {
-  const { expectedInputs, ...fields } = newRun
+async function insertRun(newRun: NewRun, items: RunSlot[]) {
+  const { expectedInputs, profiles = [], ...fields } = newRun
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
   const phones =
     newRun.split === 'fixed'
-      ? (
-          await db
-            .select({ name: devices.name })
-            .from(devices)
-            .where(
-              and(
-                eq(devices.platform, newRun.platform),
-                eq(devices.enabled, true),
-                sql`coalesce(${devices.pausedUntil} <= now(), true)`,
-              ),
-            )
-            .orderBy(asc(devices.name))
-        ).map((d) => d.name)
+      ? await db
+          .select({
+            name: devices.name,
+            platform: devices.platform,
+            udid: devices.udid,
+            platformVersion: devices.platformVersion,
+          })
+          .from(devices)
+          .where(
+            and(
+              eq(devices.platform, newRun.platform),
+              eq(devices.enabled, true),
+              sql`coalesce(${devices.pausedUntil} <= now(), true)`,
+            ),
+          )
+          .orderBy(asc(devices.name))
       : []
-  if (newRun.split === 'fixed' && phones.length === 0) {
+  if (newRun.split === 'fixed' && profiles.length === 0 && phones.length === 0) {
     throw new BadRunError(`no enabled ${newRun.platform} phones to split the run across`)
   }
-  const expected = await expectedTimes(newRun.platform, items)
+  const expected = await expectedTimes(
+    newRun.platform,
+    items.map((i) => i.scenarioId),
+  )
 
   const runId = await db.transaction(async (tx) => {
     const [run] = await tx
       .insert(runs)
       .values({
         ...fields,
+        profiles: profiles.length ? profiles : null,
         inputIntent: {
           version: 1,
           platform: fields.platform,
           commit: fields.commit,
           appSource: inputSource(fields.appBuild),
-          scenarios: items,
+          scenarios: items.map((i) => i.scenarioId),
+          profiles,
           split: fields.split,
         },
         expectedInputs,
@@ -202,13 +218,17 @@ async function insertRun(newRun: NewRun, items: string[]) {
       .returning({ id: runs.id })
     if (!run) throw new Error('run insert returned nothing')
     await tx.insert(queue).values(
-      items.map((scenarioId, slot) => ({
-        runId: run.id,
-        slot,
-        scenarioId,
-        assignedDevice: phones[slot % phones.length],
-        expectedMs: expected.get(scenarioId),
-      })),
+      items.map(({ scenarioId, profile }, slot) => {
+        const eligible = phones.filter((d) => !profile || matchesProfile(d, profile))
+        return {
+          runId: run.id,
+          slot,
+          scenarioId,
+          profile,
+          assignedDevice: eligible[slot % eligible.length]?.name,
+          expectedMs: expected.get(scenarioId),
+        }
+      }),
     )
     return run.id
   })
@@ -276,7 +296,8 @@ const RUNS_PAGE = 50
 
 // The dashboard's runs list: RUNS_PAGE runs older than `before`, newest first (R24).
 export async function listRuns(before?: number): Promise<RunList> {
-  const { inputIntent, resolvedInputs, expectedInputs, ...columns } = getTableColumns(runs)
+  const { inputIntent, resolvedInputs, expectedInputs, profiles, ...columns } =
+    getTableColumns(runs)
   const page = await db
     .select(columns)
     .from(runs)
@@ -329,6 +350,7 @@ const attemptColumns = {
   queueId: queue.id,
   slot: queue.slot,
   scenarioId: queue.scenarioId,
+  profile: queue.profile,
   attempt: queue.attempt,
   scenarioAttempt: queue.scenarioAttempt,
   infrastructureRecoveries: queue.infrastructureRecoveries,
@@ -351,6 +373,7 @@ async function scenariosOf(run: Run) {
   const latest = await db
     .selectDistinctOn([queue.slot], {
       scenarioId: queue.scenarioId,
+      profile: queue.profile,
       attempt: queue.scenarioAttempt,
       queueStatus: queue.status,
       result: results.status,
@@ -366,6 +389,7 @@ async function scenariosOf(run: Run) {
     .orderBy(queue.slot, desc(queue.attempt))
   return latest.map((a) => ({
     id: a.scenarioId,
+    profile: a.profile,
     status: scenarioStatus(run, a.attempt, a.result, a.queueStatus),
     origin: a.result
       ? {
@@ -395,6 +419,20 @@ async function summarize(run: Run): Promise<RunSummary> {
     .orderBy(queue.device)
 
   const durationMs = runDuration(run)
+  const scenarios = await scenariosOf(run)
+  // Devices are bounded by connected hardware (R24); eligibility is separate from readiness.
+  const eligible = run.profiles?.length
+    ? await db
+        .select()
+        .from(devices)
+        .where(
+          and(
+            eq(devices.platform, run.platform),
+            eq(devices.enabled, true),
+            sql`coalesce(${devices.pausedUntil} <= now(), true)`,
+          ),
+        )
+    : []
   return {
     ...run,
     inputManifest: {
@@ -402,9 +440,21 @@ async function summarize(run: Run): Promise<RunSummary> {
       expected: run.expectedInputs,
       resolved: run.resolvedInputs,
     },
+    profiles: run.profiles ?? [],
+    coverage: (run.profiles ?? [])
+      .filter((profile) => scenarios.some((s) => s.profile?.name === profile.name))
+      .map((profile) => ({
+        profile,
+        counts: countStatuses(
+          scenarios.filter((s) => s.profile?.name === profile.name).map((s) => s.status),
+        ),
+        availability: eligible.some((d) => matchesProfile(d, profile))
+          ? ('available' as const)
+          : ('no_matching_device' as const),
+      })),
     recovery: recoveryOf(run),
     durationMs,
-    scenarios: await scenariosOf(run),
+    scenarios,
     devices: phones.flatMap(({ name, attempts, busyMs }) => {
       if (!name) return []
       const busy = Math.round(busyMs)
@@ -509,6 +559,7 @@ export async function leaseNext(
   signal: AbortSignal,
   cleanup = false,
   inputs = false,
+  profiles = false,
 ): Promise<Lease | null> {
   signal.throwIfAborted()
   const lease = await db.transaction(async (tx) => {
@@ -557,12 +608,25 @@ export async function leaseNext(
           eq(runs.platform, device.platform),
           inArray(runs.commit, commits), // only runs whose scenarios this runner has
           inputs ? undefined : isNull(runs.inputIntent),
+          or(
+            isNull(queue.profile),
+            profiles &&
+              inputs &&
+              cleanup &&
+              device.platformVersion &&
+              virtualDeviceClass(device.platform, device.udid)
+              ? sql`${queue.profile}->>'platformVersion' = ${device.platformVersion} AND ${queue.profile}->>'deviceClass' = ${virtualDeviceClass(device.platform, device.udid)}`
+              : sql`false`,
+          ),
           // a fixed split's item is its phone's, or anyone's once that phone is off
           or(
             isNull(queue.assignedDevice),
             eq(queue.assignedDevice, device.name),
             sql`not exists (select 1 from ${devices} d where d.name = ${queue.assignedDevice}
-              and d.enabled and coalesce(d.paused_until <= now(), true))`,
+              and d.enabled and coalesce(d.paused_until <= now(), true)
+              and (${queue.profile} IS NULL OR d.platform_version = ${queue.profile}->>'platformVersion'
+                and (CASE WHEN d.platform = 'ios' THEN 'ios-simulator'
+                  WHEN d.udid ~ '^emulator-[0-9]+$' THEN 'android-emulator' END) = ${queue.profile}->>'deviceClass'))`,
           ),
         ),
       )
@@ -608,6 +672,15 @@ export async function leaseNext(
       inputProtocol: 1 as const,
       inputIntent: row.run.inputIntent,
       expectedInputs: row.run.resolvedInputs ?? row.run.expectedInputs,
+      profile: leased.profile,
+      profileProtocol: 1 as const,
+      deviceIdentity: {
+        udid: device.udid,
+        platform: device.platform,
+        host: device.host,
+        appiumUrl: device.appiumUrl,
+        systemPort: device.systemPort,
+      },
     }
   })
   // COMMIT is asynchronous too: a disconnect during it needs compensation after it finishes.
@@ -661,7 +734,7 @@ export async function heartbeat(queueId: number, device: string, scenarioStarted
         eq(queue.device, device),
         eq(queue.status, 'leased'),
         scenarioStarted
-          ? sql`(${queue.inputsVerified} OR NOT EXISTS (SELECT 1 FROM ${runs} r WHERE r.id = ${queue.runId} AND r.input_intent IS NOT NULL))`
+          ? sql`((${queue.profile} IS NULL OR ${queue.inputRuntime} IS NOT NULL) AND (${queue.inputsVerified} OR NOT EXISTS (SELECT 1 FROM ${runs} r WHERE r.id = ${queue.runId} AND r.input_intent IS NOT NULL)))`
           : undefined,
       ),
     )
@@ -702,7 +775,10 @@ export async function submitResult(body: ResultBody) {
     .where(leasedHere)
     .returning()
   if (!row) return { saved: false, problems: [] }
-  if (!row.inputsVerified && (body.status === 'passed' || body.scenarioStarted === true)) {
+  if (
+    (!row.inputsVerified || (row.profile && !row.inputRuntime)) &&
+    (body.status === 'passed' || body.scenarioStarted === true)
+  ) {
     const run = await db.query.runs.findFirst({ where: eq(runs.id, row.runId) })
     if (run?.inputIntent)
       throw new InputConflictError('verify run inputs before scenario execution or a passed result')
@@ -794,10 +870,12 @@ export async function expireRuns() {
   // Time the server was down is not "no progress": phones need STUCK_RUN_MINUTES of uptime to
   // come back before a run can count as stuck.
   if (process.uptime() < config.STUCK_RUN_MINUTES * 60) return
+  const failed: string[] = []
+  await expireProfileSlots().catch((err) => failed.push(`profile coverage: ${messageOf(err)}`))
   const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
   const stuck = await db.execute<{ id: number; platform: string }>(sql`
       SELECT r.id, r.platform FROM ${runs} r
-      WHERE r.status = 'running' AND r.created_at < ${cutoff}
+      WHERE r.status = 'running' AND r.profiles IS NULL AND r.created_at < ${cutoff}
         AND NOT EXISTS (
           SELECT 1 FROM ${queue} q
           JOIN ${runs} r2 ON r2.id = q.run_id
@@ -806,7 +884,6 @@ export async function expireRuns() {
             AND (q.status = 'leased' OR q.leased_at > ${cutoff} OR res.created_at > ${cutoff}))`)
   // One transaction per run: a run that can't be closed (a deadlock, a bad row) does not undo the
   // others; it is tried again next time (R51).
-  const failed: string[] = []
   for (const run of stuck.rows) {
     const error = `stuck: no ${run.platform} phone took or finished any work for ${config.STUCK_RUN_MINUTES} minutes`
     await db
@@ -818,6 +895,78 @@ export async function expireRuns() {
       `could not close ${failed.length} stuck run(s): ${failed.slice(0, 5).join('; ')}`,
     )
   }
+}
+
+// Missing coverage expires independently: progress on another runtime cannot hide it.
+// Activity on a compatible device (including an ordinary run) protects work waiting behind it.
+async function expireProfileSlots() {
+  const cutoff = sql`now() - make_interval(mins => ${config.STUCK_RUN_MINUTES})`
+  const idle = (runId: number, profile: ExecutionProfile) => sql`NOT EXISTS (
+    SELECT 1 FROM ${queue} q2 JOIN ${runs} r2 ON r2.id = q2.run_id
+    JOIN ${devices} d ON d.name = q2.device
+    LEFT JOIN ${results} res ON res.queue_id = q2.id
+    WHERE r2.platform = (SELECT platform FROM ${runs} WHERE id = ${runId})
+      AND (q2.profile->>'platformVersion' = ${profile.platformVersion}
+        AND q2.profile->>'deviceClass' = ${profile.deviceClass}
+        OR q2.profile IS NULL AND coalesce(q2.input_runtime->>'platformVersion', d.platform_version) = ${profile.platformVersion}
+          AND coalesce(q2.input_runtime->>'deviceClass', CASE WHEN d.platform = 'ios' THEN 'ios-simulator'
+            WHEN d.udid ~ '^emulator-[0-9]+$' THEN 'android-emulator' END) = ${profile.deviceClass})
+      AND (q2.status = 'leased' OR q2.leased_at > ${cutoff} OR res.created_at > ${cutoff}))`
+  // Keyset-page every running run so an active first page cannot starve later coverage.
+  const failed: string[] = []
+  let after = 0
+  while (true) {
+    const candidates = await db
+      .select()
+      .from(runs)
+      .where(
+        and(
+          eq(runs.status, 'running'),
+          isNotNull(runs.profiles),
+          lt(runs.createdAt, cutoff),
+          sql`${runs.id} > ${after}`,
+        ),
+      )
+      .orderBy(runs.id)
+      .limit(100)
+    const last = candidates.at(-1)
+    if (!last) break
+    after = last.id
+    for (const run of candidates) {
+      for (const profile of run.profiles ?? []) {
+        try {
+          await db.transaction(async (tx) => {
+            const rows = await tx
+              .update(queue)
+              .set({ status: 'done' })
+              .where(
+                and(
+                  eq(queue.runId, run.id),
+                  eq(queue.status, 'pending'),
+                  sql`${queue.profile}->>'name' = ${profile.name}`,
+                  idle(run.id, profile),
+                ),
+              )
+              .returning()
+            for (const row of rows)
+              await saveResult(tx, row, {
+                status: 'failed',
+                durationMs: 0,
+                error: `stuck: required profile ${profile.name} (${profile.deviceClass} ${profile.platformVersion}) made no progress for ${config.STUCK_RUN_MINUTES} minutes`,
+                phase: 'queue',
+                failureKind: 'run_stuck',
+                scenarioStarted: false,
+              })
+            if (rows.length) await finishRunIfDone(tx, run.id)
+          })
+        } catch (err) {
+          failed.push(`run ${run.id}, profile ${profile.name}: ${messageOf(err)}`)
+        }
+      }
+    }
+  }
+  if (failed.length)
+    throw new Error(`could not expire profile coverage: ${failed.slice(0, 5).join('; ')}`)
 }
 
 // Fails every open item of a run with `error`, and finishes the run. A phone that holds one of
@@ -863,15 +1012,23 @@ export async function cancelRun(runId: number) {
 
 // A finished run, started again as a new run with the same build, commit and split. The old run
 // keeps its results (chat and Jenkins already have them).
-async function startAgain(run: Run, scenarioIds: string[], trigger: string) {
+async function startAgain(run: Run, items: RunSlot[], trigger: string) {
   if (run.status === 'running') throw new BadRunError(`run #${run.id} is still running`)
-  if (scenarioIds.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
+  if (items.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
   if (!run.inputIntent || !run.resolvedInputs)
     throw new BadRunError('verified inputs are unavailable for this run; start a new run instead')
   const { platform, appBuild, commit, split } = run
   return insertRun(
-    { platform, appBuild, commit, split, trigger, expectedInputs: run.resolvedInputs },
-    scenarioIds,
+    {
+      platform,
+      appBuild,
+      commit,
+      split,
+      trigger,
+      expectedInputs: run.resolvedInputs,
+      profiles: run.profiles ?? [],
+    },
+    items,
   )
 }
 
@@ -937,6 +1094,14 @@ export async function recordInputRuntime(queueId: number, device: string, runtim
       JSON.stringify(InputRuntime.parse(item.inputRuntime)) !== JSON.stringify(runtime)
     )
       throw new InputConflictError('runtime observation is already recorded')
+    if (
+      item.profile &&
+      (runtime.platformVersion !== item.profile.platformVersion ||
+        runtime.deviceClass !== item.profile.deviceClass)
+    )
+      throw new InputConflictError(
+        `actual device runtime does not match required profile ${item.profile.name}`,
+      )
     if (!item.inputRuntime)
       await tx.update(queue).set({ inputRuntime: runtime }).where(eq(queue.id, queueId))
   })
@@ -953,9 +1118,10 @@ export async function inputManifestPage(runId: number, page: number) {
       expected: run.expectedInputs,
       resolved: run.resolvedInputs,
     },
-    attempts: items.attempts.map(({ queueId, device, inputRuntime }) => ({
+    attempts: items.attempts.map(({ queueId, device, profile, inputRuntime }) => ({
       queueId,
       device,
+      profile,
       runtime: inputRuntime,
     })),
     next: items.next,
@@ -967,7 +1133,9 @@ export async function runAgain(runId: number, failedOnly: boolean) {
   const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
   if (!run) return null
   const scenarios = await scenariosOf(run)
-  const ids = scenarios.filter((s) => !failedOnly || s.status === 'failed').map((s) => s.id)
+  const ids = scenarios
+    .filter((s) => !failedOnly || s.status === 'failed')
+    .map((s) => ({ scenarioId: s.id, profile: s.profile }))
   const what = failedOnly ? 'failed scenarios' : 'all scenarios'
   return startAgain(run, ids, `dashboard: ${what} of run #${runId}`)
 }
@@ -975,7 +1143,12 @@ export async function runAgain(runId: number, failedOnly: boolean) {
 // One failed attempt's scenario, as a new run. Null when there is no such attempt.
 export async function retryAttempt(queueId: number) {
   const [found] = await db
-    .select({ run: runs, scenarioId: queue.scenarioId, result: results.status })
+    .select({
+      run: runs,
+      scenarioId: queue.scenarioId,
+      profile: queue.profile,
+      result: results.status,
+    })
     .from(queue)
     .innerJoin(runs, eq(runs.id, queue.runId))
     .leftJoin(results, eq(results.queueId, queue.id))
@@ -983,7 +1156,7 @@ export async function retryAttempt(queueId: number) {
   if (!found) return null
   if (found.result !== 'failed') throw new BadRunError('only a failed attempt can run again')
   const trigger = `dashboard: ${found.scenarioId} of run #${found.run.id}`
-  return startAgain(found.run, [found.scenarioId], trigger)
+  return startAgain(found.run, [{ scenarioId: found.scenarioId, profile: found.profile }], trigger)
 }
 
 // Turns a phone on or off. A phone that is off finishes its current attempt and takes no more,
@@ -1134,6 +1307,7 @@ async function recordAttempt(tx: Tx, row: QueueRow, outcome: Outcome) {
           runId: row.runId,
           slot: row.slot,
           scenarioId: row.scenarioId,
+          profile: row.profile,
           attempt: row.attempt + 1,
           scenarioAttempt: row.scenarioAttempt + (infrastructure ? 0 : 1),
           infrastructureRecoveries: row.infrastructureRecoveries + (infrastructure ? 1 : 0),

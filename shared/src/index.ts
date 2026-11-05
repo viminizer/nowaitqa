@@ -21,6 +21,25 @@ export const DbIdParam = z
 export const Platform = z.enum(['android', 'ios'])
 export type Platform = z.infer<typeof Platform>
 
+export const RuntimeVersion = z
+  .string()
+  .regex(/^\d+(?:\.\d+){0,2}$/, 'use an exact OS version, such as 16 or 18.5')
+  .max(32)
+export const VirtualDeviceClass = z.enum(['android-emulator', 'ios-simulator'])
+export const ExecutionProfile = z.object({
+  name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/),
+  deviceClass: VirtualDeviceClass,
+  platformVersion: RuntimeVersion,
+})
+export type ExecutionProfile = z.infer<typeof ExecutionProfile>
+export function virtualDeviceClass(platform: Platform, udid: string) {
+  return platform === 'ios' && z.uuid().safeParse(udid).success
+    ? ('ios-simulator' as const)
+    : platform === 'android' && /^emulator-\d+$/.test(udid)
+      ? ('android-emulator' as const)
+      : null
+}
+
 const DeviceFields = z.object({
   name: z.string().min(1),
   platform: Platform,
@@ -29,6 +48,7 @@ const DeviceFields = z.object({
   systemPort: z.number().int().positive().max(65_535), // iOS also reserves the following port (MJPEG)
   host: z.string().min(1), // which machine the phone is plugged into
   enabled: z.boolean().default(true),
+  platformVersion: RuntimeVersion.nullable().default(null),
 })
 
 function checkSimulator(
@@ -49,11 +69,21 @@ function checkSimulator(
 }
 export const Device = DeviceFields.superRefine(checkSimulator)
 export type Device = z.infer<typeof Device>
+export function matchesProfile(
+  device: Pick<Device, 'platform' | 'udid' | 'platformVersion'>,
+  profile: ExecutionProfile,
+) {
+  return (
+    device.platformVersion === profile.platformVersion &&
+    virtualDeviceClass(device.platform, device.udid) === profile.deviceClass
+  )
+}
 // PUT /devices: without `enabled`, a new phone is on and a known one keeps its setting (the
 // dashboard may have turned it off).
-export const DeviceBody = DeviceFields.extend({ enabled: z.boolean().optional() }).superRefine(
-  checkSimulator,
-)
+export const DeviceBody = DeviceFields.extend({
+  enabled: z.boolean().optional(),
+  platformVersion: RuntimeVersion.nullable().optional(),
+}).superRefine(checkSimulator)
 export type DeviceBody = z.infer<typeof DeviceBody>
 
 export const DeviceContactBody = DeviceFields.pick({
@@ -99,6 +129,7 @@ export const InputRuntime = z.object({
   automation: z.string().max(100).nullable(),
   driver: z.string().max(100).nullable(),
   platformVersion: z.string().max(100).nullable(),
+  deviceClass: VirtualDeviceClass.nullable().default(null),
 })
 export type InputRuntime = z.infer<typeof InputRuntime>
 export const RunInputIntent = z.object({
@@ -107,6 +138,7 @@ export const RunInputIntent = z.object({
   commit: FullCommit,
   appSource: z.string(),
   scenarios: z.array(z.string()),
+  profiles: z.array(ExecutionProfile).max(10).default([]),
   split: z.enum(['queue', 'fixed']),
 })
 export type RunInputIntent = z.infer<typeof RunInputIntent>
@@ -136,7 +168,12 @@ export const ManifestQuery = z.object({
 export const ManifestPage = z.object({
   manifest: InputManifest,
   attempts: z.array(
-    z.object({ queueId: DbId, device: z.string().nullable(), runtime: InputRuntime.nullable() }),
+    z.object({
+      queueId: DbId,
+      device: z.string().nullable(),
+      profile: ExecutionProfile.nullable().default(null),
+      runtime: InputRuntime.nullable(),
+    }),
   ),
   next: z.number().int().nonnegative().nullable(),
 })
@@ -170,16 +207,33 @@ export const Catalog = z.object({
 })
 export type Catalog = z.infer<typeof Catalog>
 
-export const CreateRunBody = z.object({
-  platform: Platform,
-  appBuild: z.string().min(1), // URL or Appium-host path: Android APK or iOS Simulator .app / .app.zip
-  commit: Commit.optional(), // the scenarios' commit; default: the newest catalog a runner sent
-  trigger: z.string().default('manual'),
-  // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
-  // (the old way, kept to compare against in the benchmark).
-  split: z.enum(['queue', 'fixed']).default('queue'),
-  repeat: z.number().int().min(1).max(20).default(1), // put every scenario in the run N times
-})
+export const CreateRunBody = z
+  .object({
+    platform: Platform,
+    appBuild: z.string().min(1), // URL or Appium-host path: Android APK or iOS Simulator .app / .app.zip
+    commit: Commit.optional(), // the scenarios' commit; default: the newest catalog a runner sent
+    trigger: z.string().default('manual'),
+    // queue = any free phone takes the next scenario. fixed = each phone gets its list up front
+    // (the old way, kept to compare against in the benchmark).
+    split: z.enum(['queue', 'fixed']).default('queue'),
+    repeat: z.number().int().min(1).max(20).default(1), // put every scenario in the run N times
+    profiles: z.array(ExecutionProfile).max(10).default([]),
+  })
+  .superRefine((body, ctx) => {
+    if (new Set(body.profiles.map((p) => p.name)).size !== body.profiles.length)
+      ctx.addIssue({ code: 'custom', path: ['profiles'], message: 'profile names must be unique' })
+    if (
+      body.profiles.some(
+        (p) =>
+          p.deviceClass !== (body.platform === 'android' ? 'android-emulator' : 'ios-simulator'),
+      )
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['profiles'],
+        message: 'profiles must match the run platform',
+      })
+  })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
 // commits: the runner's pinned, ready scenario revisions; the phone only gets work on them.
@@ -191,6 +245,7 @@ export const LeaseBody = z.object({
   runId: DbId.optional(),
   cleanup: z.boolean().default(false), // upgraded runners acknowledge stopped execution
   inputs: z.boolean().default(false), // upgraded runners verify immutable run inputs
+  profiles: z.boolean().default(false), // upgraded runners verify actual runtime coverage
 })
 
 export const Lease = z.object({
@@ -207,6 +262,17 @@ export const Lease = z.object({
   inputProtocol: z.literal(1).optional(),
   inputIntent: RunInputIntent.nullable().default(null),
   expectedInputs: ResolvedInputs.nullable().default(null),
+  profile: ExecutionProfile.nullable().default(null),
+  profileProtocol: z.literal(1).optional(),
+  deviceIdentity: DeviceFields.pick({
+    udid: true,
+    platform: true,
+    host: true,
+    appiumUrl: true,
+    systemPort: true,
+  })
+    .nullable()
+    .default(null),
 })
 export type Lease = z.infer<typeof Lease>
 
@@ -331,6 +397,16 @@ export const RunSummary = z.object({
   commit: z.string(),
   trigger: z.string(),
   inputManifest: InputManifest.default({ intent: null, expected: null, resolved: null }),
+  profiles: z.array(ExecutionProfile).default([]),
+  coverage: z
+    .array(
+      z.object({
+        profile: ExecutionProfile,
+        counts: z.record(ScenarioStatus, z.number().int()),
+        availability: z.enum(['available', 'no_matching_device']),
+      }),
+    )
+    .default([]),
   split: z.enum(['queue', 'fixed']),
   status: z.enum(['running', 'passed', 'failed']),
   createdAt: z.coerce.date(),
@@ -349,6 +425,7 @@ export const RunSummary = z.object({
   scenarios: z.array(
     z.object({
       id: z.string(),
+      profile: ExecutionProfile.nullable().default(null),
       status: ScenarioStatus,
       origin: AttemptOrigin.nullable().default(null),
     }),
@@ -371,7 +448,13 @@ export type RunSummary = z.infer<typeof RunSummary>
 export const RunList = z.object({
   older: z.number().int().nullable(),
   runs: z.array(
-    RunSummary.omit({ scenarios: true, devices: true, inputManifest: true }).extend({
+    RunSummary.omit({
+      scenarios: true,
+      devices: true,
+      inputManifest: true,
+      profiles: true,
+      coverage: true,
+    }).extend({
       counts: z.record(ScenarioStatus, z.number().int()), // countStatuses() of its scenarios
     }),
   ),
@@ -383,6 +466,7 @@ export const Attempt = z.object({
   queueId: z.number().int(),
   slot: z.number().int(),
   scenarioId: z.string(),
+  profile: ExecutionProfile.nullable().default(null),
   attempt: z.number().int(),
   scenarioAttempt: z.number().int().positive().nullable().default(null),
   infrastructureRecoveries: z.number().int().nonnegative().default(0),
@@ -407,6 +491,7 @@ export type Attempt = z.infer<typeof Attempt>
 export const TimelineBlock = Attempt.pick({
   queueId: true,
   scenarioId: true,
+  profile: true,
   attempt: true,
   device: true,
   status: true,

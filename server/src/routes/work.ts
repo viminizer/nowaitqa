@@ -94,6 +94,7 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
             controller.signal,
             req.body.cleanup,
             req.body.inputs,
+            req.body.profiles,
           )
           if (lease) return lease
           const left = deadline - Date.now()

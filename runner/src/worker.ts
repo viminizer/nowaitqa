@@ -33,7 +33,13 @@ import { type LeaseGuard, watchLease } from './lease-guard.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
 
-type Session = { driver: Browser; runId: number; appId: string; resetAt: number }
+type Session = {
+  driver: Browser
+  runId: number
+  appId: string
+  resetAt: number
+  profile: string | null
+}
 const ERROR_PAUSE_MS = 60_000
 
 export async function runWorker(device: Device, shutdown = new AbortController().signal) {
@@ -92,6 +98,17 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           throw new Error('upgrade the server: cleanup acknowledgement protocol is required')
         if (current.inputProtocol !== 1)
           throw new Error('upgrade the server: run input verification protocol is required')
+        if (current.profile && current.profileProtocol !== 1)
+          throw new Error('upgrade the server: required profile verification is unavailable')
+        if (
+          current.deviceIdentity &&
+          Object.entries(current.deviceIdentity).some(
+            ([key, value]) => device[key as keyof Device] !== value,
+          )
+        )
+          throw new Error(
+            'device registration changed; restart the runner to use its current identity',
+          )
         guard = watchLease(device, current, shutdown)
         let headers = gate.activate(guard)
         await guard.renew()
@@ -119,6 +136,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         if (
           config.SESSION_MODE === 'reuse' &&
           session?.runId === current.runId &&
+          session.profile === (current.profile?.name ?? null) &&
           session.resetAt === current.sessionResetAt.getTime()
         ) {
           await prepared?.release()
@@ -306,7 +324,13 @@ async function openSession(device: Device, lease: Lease, gate: AppiumGate): Prom
     ? z.object({ bundleId: z.string().min(1) }).parse(await driver.execute('mobile: activeAppInfo'))
         .bundleId
     : await driver.getCurrentPackage()
-  const session = { driver, runId: lease.runId, appId, resetAt: lease.sessionResetAt.getTime() }
+  const session = {
+    driver,
+    runId: lease.runId,
+    appId,
+    resetAt: lease.sessionResetAt.getTime(),
+    profile: lease.profile?.name ?? null,
+  }
   if (ios || config.SESSION_MODE === 'fresh') await resetApp(device, session)
   return session
 }

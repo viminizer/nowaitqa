@@ -66,6 +66,11 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                     <tr key={a.queueId}>
                       <td>
                         {a.scenarioId}
+                        {a.profile && (
+                          <p className="muted">
+                            {a.profile.name} · {a.profile.deviceClass} {a.profile.platformVersion}
+                          </p>
+                        )}
                         <p className="muted">
                           #{a.queueId} · attempt {a.attempt}
                           {a.scenarioAttempt !== null && <> · test attempt {a.scenarioAttempt}</>}
@@ -277,6 +282,43 @@ export function RunPage({ id, page }: { id: number; page: number }) {
               <dd>{run.inputManifest.intent?.appSource ?? inputSource(run.appBuild)}</dd>
             </dl>
 
+            {run.coverage.length > 0 && (
+              <>
+                <h2>Required coverage</h2>
+                <div className="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Profile</th>
+                        <th>Results</th>
+                        <th>Devices</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {run.coverage.map((c) => (
+                        <tr key={c.profile.name}>
+                          <td>
+                            {c.profile.name}
+                            <p className="muted">
+                              {c.profile.deviceClass} {c.profile.platformVersion}
+                            </p>
+                          </td>
+                          <td>
+                            <Counts counts={c.counts} />
+                          </td>
+                          <td>
+                            {c.availability === 'available'
+                              ? 'Matching registration available'
+                              : 'No enabled matching device'}
+                            <p className="muted">Runtime is verified before execution.</p>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
             <h2>Phones</h2>
             <Timeline run={run} />
           </>
