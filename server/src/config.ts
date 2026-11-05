@@ -24,6 +24,8 @@ const Env = z.object({
   DEVICE_PAUSE_SECONDS: z.coerce.number().int().positive().max(86_400).default(300),
   ARTIFACT_DIR: z.string().default('artifacts'), // where artifacts go when S3_BUCKET is not set
   ARTIFACT_DAYS: z.coerce.number().int().positive().default(30),
+  MAX_FIXTURE_CLEANUP_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  FIXTURE_RETRY_SECONDS: z.coerce.number().int().min(1).max(3600).default(60),
   // S3 for artifacts: on when S3_BUCKET is set. S3_ENDPOINT for RustFS or MinIO (like
   // http://localhost:9000); without keys, the SDK finds credentials itself (an IAM role on AWS).
   S3_BUCKET: optional(z.string()),

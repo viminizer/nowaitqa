@@ -236,6 +236,95 @@ export const CreateRunBody = z
   })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
+export const MAX_ATTEMPT_FIXTURES = 20
+export const FIXTURE_CLAIM_SECONDS = 180 // covers preparation +30s cleanup + process stop5s + finish HTTP10s
+export const FixtureName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9._-]{0,63}$/)
+export const FixtureState = z.enum(['pending', 'cleaning', 'quarantined', 'cleaned'])
+export type FixtureState = z.infer<typeof FixtureState>
+export const FixtureReason = z.enum([
+  'awaiting_cleanup',
+  'execution_unconfirmed',
+  'cleanup_failed',
+  'adapter_unavailable',
+  'executor_unconfirmed',
+  'cleanup_owner_lost',
+  'cleanup_dependency',
+])
+export type FixtureReason = z.infer<typeof FixtureReason>
+export const FixtureRegisterBody = z.object({
+  queueId: DbId,
+  device: z.string().min(1),
+  name: FixtureName,
+})
+export type FixtureRegisterBody = z.infer<typeof FixtureRegisterBody>
+export const FixtureKey = z.object({ key: z.uuid() })
+export const FixtureClaimBody = DeviceContactBody
+export type FixtureClaimBody = z.infer<typeof FixtureClaimBody>
+export const FixtureJob = z.object({
+  id: DbId,
+  key: z.uuid(),
+  name: FixtureName,
+  claim: z.uuid(),
+  queueId: DbId,
+  runId: DbId,
+  commit: FullCommit,
+  scenarioId: z.string(),
+  scenarios: ResolvedInputs.shape.scenarios,
+  config: ResolvedInputs.shape.config,
+  account: z.string().nullable(),
+})
+export type FixtureJob = z.infer<typeof FixtureJob>
+export const FixtureFinishBody = z
+  .object({
+    id: DbId,
+    device: z.string().min(1),
+    claim: z.uuid(),
+    clean: z.boolean(),
+    stopped: z.boolean(),
+    reason: FixtureReason.optional(),
+  })
+  .refine((r) => !r.clean || r.stopped, 'verified cleanup requires confirmed executor stop')
+export type FixtureFinishBody = z.infer<typeof FixtureFinishBody>
+export const FixtureQuery = z.object({ after: DbIdParam.optional(), queueId: DbIdParam.optional() })
+export const FixtureRetryBody = z.object({ confirmedStopped: z.literal(true) })
+export const FixturePage = z.object({
+  fixtures: z
+    .array(
+      z.object({
+        id: DbId,
+        key: z.uuid(),
+        name: FixtureName,
+        queueId: DbId,
+        runId: DbId,
+        scenarioId: z.string(),
+        device: z.string().nullable(),
+        status: FixtureState,
+        reason: FixtureReason.nullable(),
+        attempts: z.number().int().nonnegative().max(10),
+        updatedAt: z.coerce.date(),
+        canRetry: z.boolean(),
+        accountHeld: z.boolean(),
+      }),
+    )
+    .max(50),
+  next: DbId.nullable(),
+})
+export type FixturePage = z.infer<typeof FixturePage>
+export const FixtureCleanupState = z.enum(['none', 'pending', 'quarantined', 'cleaned'])
+export function fixtureReasonText(reason: FixtureReason | null) {
+  return reason
+    ? {
+        awaiting_cleanup: 'Waiting for cleanup',
+        cleanup_dependency: 'Waiting for a later fixture to be cleaned',
+        execution_unconfirmed: 'Previous execution has not been confirmed stopped',
+        cleanup_failed: 'Cleanup did not verify absence',
+        adapter_unavailable: 'Pinned fixture code is unavailable or changed',
+        executor_unconfirmed: 'Cleanup process has not been confirmed stopped',
+        cleanup_owner_lost: 'Cleanup stopped reporting; confirmation is required',
+      }[reason]
+    : ''
+}
+
 // commits: the runner's pinned, ready scenario revisions; the phone only gets work on them.
 // runId: the run the phone has a session for. That run's work comes first, so the phone does not
 // switch apps back and forth between runs.
@@ -264,6 +353,7 @@ export const Lease = z.object({
   expectedInputs: ResolvedInputs.nullable().default(null),
   profile: ExecutionProfile.nullable().default(null),
   profileProtocol: z.literal(1).optional(),
+  fixtureProtocol: z.literal(1).optional(),
   deviceIdentity: DeviceFields.pick({
     udid: true,
     platform: true,
@@ -408,6 +498,7 @@ export const AttemptDiagnostics = z.object({
 })
 export type AttemptDiagnostics = z.infer<typeof AttemptDiagnostics>
 export const DiagnosticDownload = z.object({
+  fixtures: z.string().nullable().default(null),
   commit: z.string(),
   inputs: InputManifest.omit({ intent: true }),
   runtime: InputRuntime.nullable(),
@@ -588,6 +679,7 @@ export const Attempt = z.object({
   inputsVerified: z.boolean().default(false),
   progress: AttemptProgress.nullable().default(null),
   diagnostics: z.boolean().default(false),
+  fixtureCleanup: FixtureCleanupState.default('none'),
   screenshot: z.boolean(), // a file is saved; get it from the dashboard files route
   log: z.boolean(),
   ...AttemptOrigin.shape,
@@ -639,7 +731,12 @@ export const DeviceList = z.object({
       pausedUntil: z.coerce.date().nullable(), // null when the cooldown is over, by the server's clock
       pauseReason: z.string().nullable(),
       cleanup: z
-        .object({ queueId: DbId, runId: DbId, scenarioId: z.string() })
+        .object({
+          queueId: DbId,
+          runId: DbId,
+          scenarioId: z.string(),
+          fixtureState: FixtureState.nullable().default(null),
+        })
         .nullable()
         .default(null),
     }),

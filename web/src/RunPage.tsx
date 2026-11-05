@@ -13,7 +13,9 @@ import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.ts
 
 // A finished run does not change any more.
 const isRunning = (run: RunDetail) => run.status === 'running'
-const isRunRunning = (page: AttemptPage) => page.runStatus === 'running'
+const needsAttemptRefresh = (page: AttemptPage) =>
+  page.runStatus === 'running' ||
+  page.attempts.some((a) => a.fixtureCleanup === 'pending' || a.fixtureCleanup === 'quarantined')
 
 const file = (a: Attempt, name: 'screenshot' | 'log' | 'diagnostics') =>
   `/dashboard/api/attempts/${a.queueId}/${name}`
@@ -32,7 +34,7 @@ function ErrorText({ error }: { error: string }) {
 
 // One page of the run's attempts. The server sorts them: failures first once the run is over.
 function Attempts({ runId, page }: { runId: number; page: number }) {
-  const state = useApi(`/runs/${runId}/attempts?page=${page}`, AttemptPage, isRunRunning)
+  const state = useApi(`/runs/${runId}/attempts?page=${page}`, AttemptPage, needsAttemptRefresh)
   return (
     <Loaded state={state}>
       {({ attempts, next, runStatus }) =>
@@ -156,6 +158,12 @@ function Attempts({ runId, page }: { runId: number; page: number }) {
                         {a.error && <ErrorText error={a.error} />}
                       </td>
                       <td className="files">
+                        {a.fixtureCleanup !== 'none' && (
+                          <p>
+                            <a href={`#/fixtures?queueId=${a.queueId}`}>Fixtures</a>{' '}
+                            <Status status={a.fixtureCleanup} />
+                          </p>
+                        )}
                         <a href={file(a, 'diagnostics')}>
                           Download diagnostics{!a.diagnostics && ' (available metadata)'}
                         </a>

@@ -43,3 +43,7 @@ if (!parsed.success) {
   process.exit(1)
 }
 export const config = parsed.data
+
+// A fixture step never exceeds the recorded scenario deadline or this fixed 30s ceiling.
+export const fixtureTimeoutMs = (scenarioTimeoutSeconds: number) =>
+  Math.min(30, scenarioTimeoutSeconds) * 1000

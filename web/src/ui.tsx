@@ -56,7 +56,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error?: 
 // A run, scenario, attempt or phone status. A leased attempt is one a phone is running now.
 export function Status({ status }: { status: string }) {
   return (
-    <span className={`status status-${status}`}>
+    <span
+      className={`status status-${status === 'cleaned' ? 'passed' : status === 'quarantined' ? 'failed' : status === 'cleaning' ? 'leased' : status}`}
+    >
       {status === 'leased' ? 'running' : status === 'waiting' ? 'waiting for runner' : status}
     </span>
   )

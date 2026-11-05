@@ -1,70 +1,22 @@
 // Isolate scenario code from the heartbeat/event loop and confirm exit before returning a result.
 import { type ChildProcess, fork } from 'node:child_process'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import type { Device, FailureKind, Lease, ResultBody } from '@nowait/shared'
 import type { Browser } from 'webdriverio'
+import { registerFixture } from './api.ts'
 import type { AppiumGate } from './appium-gate.ts'
-import { config } from './config.ts'
+import { config, fixtureTimeoutMs } from './config.ts'
 import type { AttemptTrace } from './diagnostics.ts'
+import { stopExecutor } from './executor.ts'
 import type { LeaseGuard } from './lease-guard.ts'
 import { log } from './log.ts'
-import { ScenarioOutcome, ScenarioReady, ScenarioStarted } from './scenario-protocol.ts'
-
-const STOP_GRACE_MS = 250
-const STOP_LIMIT_MS = 5_000
-
-async function stopExecutor(child: ChildProcess, exited: Promise<void>, device: string) {
-  if (!child.pid) return true
-  const pid = child.pid
-  const groupSignal = (signal: NodeJS.Signals | 0) => {
-    try {
-      process.kill(-pid, signal)
-      return true
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false
-      throw err
-    }
-  }
-  if (child.connected)
-    child.send({ type: 'stop' }, (err) => {
-      if (err) log(device, 'could not signal scenario stop', err.message)
-    })
-  const kill = setTimeout(() => {
-    try {
-      groupSignal('SIGKILL')
-    } catch (err) {
-      log(device, 'could not terminate scenario process group', err)
-    }
-  }, STOP_GRACE_MS)
-  let limit: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      exited
-        .then(async () => {
-          // The executor can have exited with an ordinary child tool still running. Its owned
-          // process group must be gone too before the device/account can be released.
-          groupSignal('SIGKILL')
-          const deadline = performance.now() + STOP_LIMIT_MS
-          while (groupSignal(0)) {
-            if (performance.now() >= deadline) return false
-            await sleep(20)
-          }
-          return true
-        })
-        .catch((err) => {
-          log(device, 'scenario process group cleanup failed', err)
-          return false
-        }),
-      new Promise<false>((resolve) => {
-        limit = setTimeout(() => resolve(false), STOP_LIMIT_MS)
-      }),
-    ])
-  } finally {
-    clearTimeout(kill)
-    clearTimeout(limit)
-  }
-}
+import {
+  FixtureRequest,
+  FixtureSetupDone,
+  ScenarioOutcome,
+  ScenarioReady,
+  ScenarioStarted,
+} from './scenario-protocol.ts'
 
 export async function runScenario(
   driver: Browser,
@@ -108,10 +60,12 @@ export async function runScenario(
     exited = new Promise<void>((resolve) => executor.once('exit', () => resolve()))
     outcome = await new Promise<ScenarioOutcome>((resolve) => {
       let finished = false
+      const fixtureTimers = new Map<number, ReturnType<typeof setTimeout>>()
       const finish = (result: ScenarioOutcome) => {
         if (finished) return
         finished = true
         clearTimeout(timer)
+        for (const fixtureTimer of fixtureTimers.values()) clearTimeout(fixtureTimer)
         signal.removeEventListener('abort', abort)
         gate.stopScenario()
         resolve(result)
@@ -127,6 +81,65 @@ export async function runScenario(
       if (signal.aborted) abort()
       executor.on('message', (message) => {
         if (finished) return
+        const settled = FixtureSetupDone.safeParse(message)
+        if (settled.success) {
+          clearTimeout(fixtureTimers.get(settled.data.requestId))
+          fixtureTimers.delete(settled.data.requestId)
+          return
+        }
+        const fixture = FixtureRequest.safeParse(message)
+        if (fixture.success) {
+          const request = fixture.data
+          if (fixtureTimers.has(request.requestId))
+            return finish(failure('duplicate fixture setup request', 'executor_error'))
+          // The disposable executor may block its own event loop. Enforce setup's bound here,
+          // including registration latency, independently of the longer scenario deadline.
+          fixtureTimers.set(
+            request.requestId,
+            setTimeout(
+              () => finish(failure('fixture setup timed out', 'timeout')),
+              fixtureTimeoutMs(config.SCENARIO_TIMEOUT_SECONDS),
+            ),
+          )
+          void (async () => {
+            try {
+              if (lease.fixtureProtocol !== 1)
+                throw new Error('upgrade the server before using fixtures')
+              guard.check()
+              const record = await registerFixture(
+                { queueId: lease.queueId, device: device.name, name: request.name },
+                signal,
+              )
+              guard.check()
+              if (!finished && executor.connected)
+                executor.send(
+                  { type: 'fixture_registered', requestId: request.requestId, key: record.key },
+                  (err) => {
+                    if (err) log(device.name, 'fixture registration reply unavailable', err.name)
+                  },
+                )
+            } catch (err) {
+              log(
+                device.name,
+                'fixture registration unavailable',
+                err instanceof Error ? err.name : 'unknown error',
+              )
+              if (!finished && executor.connected)
+                executor.send(
+                  {
+                    type: 'fixture_error',
+                    requestId: request.requestId,
+                    upgradeRequired: lease.fixtureProtocol !== 1,
+                  },
+                  (sendErr) => {
+                    if (sendErr)
+                      log(device.name, 'fixture rejection reply unavailable', sendErr.name)
+                  },
+                )
+            }
+          })()
+          return
+        }
         if (ScenarioStarted.safeParse(message).success) {
           scenarioStarted = true
           guard.markStarted()
@@ -160,6 +173,8 @@ export async function runScenario(
         executor.send(
           {
             type: 'start',
+            queueId: lease.queueId,
+            fixtureTimeoutMs: fixtureTimeoutMs(config.SCENARIO_TIMEOUT_SECONDS),
             file,
             scenarioId: lease.scenarioId,
             sessionId: driver.sessionId,

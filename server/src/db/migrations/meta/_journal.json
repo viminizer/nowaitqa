@@ -134,6 +134,13 @@
       "when": 1793879069896,
       "tag": "0018_steep_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793882836765,
+      "tag": "0019_acoustic_goliath",
+      "breakpoints": true
     }
   ]
 }

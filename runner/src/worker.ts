@@ -28,6 +28,7 @@ import { type AppiumGate, openAppiumGate } from './appium-gate.ts'
 import { pinCatalog, type ScenarioPin } from './catalog.ts'
 import { config } from './config.ts'
 import { type AttemptTrace, attemptTrace } from './diagnostics.ts'
+import { cleanupFixture, FixtureCleanupUnconfirmedError } from './fixtures.ts'
 import { scenarioIdentity, stageApp } from './input-files.ts'
 import { inputRuntime } from './input-runtime.ts'
 import { type LeaseGuard, watchLease } from './lease-guard.ts'
@@ -85,6 +86,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
       let prepared: Awaited<ReturnType<typeof stageApp>> | undefined
       let verifiedInputs: ResolvedInputs | undefined
       try {
+        if (await cleanupFixture(device, shutdown)) continue
         const catalog = pinCatalog()
         try {
           if (!catalog.commits.length) {
@@ -286,7 +288,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           )
           return
         }
-        if (shutdown.aborted) return
+        if (shutdown.aborted || err instanceof FixtureCleanupUnconfirmedError) return
         if (err instanceof DevicePausedError) {
           log(device.name, err.message)
           await pause(Math.max(0, err.until - Date.now()), shutdown)

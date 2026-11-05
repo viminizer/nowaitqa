@@ -8,9 +8,15 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { config } from './config.ts'
 import { runMigrations } from './db/index.ts'
 import { startNotifications } from './notify/index.ts'
-import { expireLeases, expireRuns, pauseUnhealthyDevices } from './queue.ts'
+import {
+  deleteOldFixtureRecords,
+  expireLeases,
+  expireRuns,
+  pauseUnhealthyDevices,
+} from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
+import { fixtureRoutes } from './routes/fixtures.ts'
 import { runRoutes } from './routes/runs.ts'
 import { workRoutes } from './routes/work.ts'
 import { deleteOldArtifacts, store } from './storage/index.ts'
@@ -68,6 +74,7 @@ app.get('/health', async () => ({ ok: true }))
 await app.register(runRoutes)
 await app.register(workRoutes)
 await app.register(deviceRoutes)
+await app.register(fixtureRoutes)
 await app.register(dashboardRoutes)
 
 // The dashboard's built files, behind the same basic auth. Checked at startup: build before starting.
@@ -96,5 +103,6 @@ every(15_000, 'expireLeases', expireLeases, app.log)
 every(60_000, 'expireRuns', expireRuns, app.log)
 every(15_000, 'pauseUnhealthyDevices', pauseUnhealthyDevices, app.log)
 every(24 * 60 * 60 * 1000, 'deleteOldArtifacts', deleteOldArtifacts, app.log)
+every(24 * 60 * 60 * 1000, 'deleteOldFixtureRecords', deleteOldFixtureRecords, app.log)
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' })
