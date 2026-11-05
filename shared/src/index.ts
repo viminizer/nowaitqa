@@ -70,6 +70,87 @@ export type DeviceConnectivity = z.infer<typeof DeviceConnectivity>
 const Commit = z.string().regex(/^[0-9a-f]{4,40}$/, 'must be a git commit hash')
 export const FullCommit = Commit.length(40)
 
+const Sha256 = z.string().regex(/^[0-9a-f]{64}$/)
+export const ResolvedInputs = z.object({
+  app: z.object({
+    kind: z.enum(['archive', 'simulator-app']),
+    sha256: Sha256,
+    bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }),
+  scenarios: z.object({
+    commit: FullCommit,
+    tree: FullCommit,
+    directory: z.string().min(1).max(4096).nullable().default(null),
+    packageSha256: Sha256.nullable(),
+    lockSha256: Sha256.nullable(),
+    ignoredCodeSha256: Sha256.nullable().default(null),
+  }),
+  config: z.object({
+    sessionMode: z.enum(['reuse', 'fresh']),
+    scenarioTimeoutSeconds: z.number().int().positive(),
+  }),
+})
+export type ResolvedInputs = z.infer<typeof ResolvedInputs>
+export const InputRuntime = z.object({
+  node: z.string().max(100),
+  runner: z.string().max(100),
+  webdriver: z.string().max(100),
+  appium: z.string().max(100).nullable(),
+  automation: z.string().max(100).nullable(),
+  driver: z.string().max(100).nullable(),
+  platformVersion: z.string().max(100).nullable(),
+})
+export type InputRuntime = z.infer<typeof InputRuntime>
+export const RunInputIntent = z.object({
+  version: z.literal(1),
+  platform: Platform,
+  commit: FullCommit,
+  appSource: z.string(),
+  scenarios: z.array(z.string()),
+  split: z.enum(['queue', 'fixed']),
+})
+export type RunInputIntent = z.infer<typeof RunInputIntent>
+export const InputManifest = z.object({
+  intent: RunInputIntent.nullable(),
+  expected: ResolvedInputs.nullable().default(null),
+  resolved: ResolvedInputs.nullable(),
+})
+export const VerifyInputsBody = z.object({
+  queueId: DbId,
+  device: z.string().min(1),
+  inputs: ResolvedInputs.extend({
+    scenarios: ResolvedInputs.shape.scenarios.extend({
+      ignoredCodeSha256: Sha256,
+      directory: z.string().min(1).max(4096),
+    }),
+  }),
+})
+export const InputRuntimeBody = z.object({
+  queueId: DbId,
+  device: z.string().min(1),
+  runtime: InputRuntime,
+})
+export const ManifestQuery = z.object({
+  page: z.coerce.number().int().min(0).max(100_000).default(0),
+})
+export const ManifestPage = z.object({
+  manifest: InputManifest,
+  attempts: z.array(
+    z.object({ queueId: DbId, device: z.string().nullable(), runtime: InputRuntime.nullable() }),
+  ),
+  next: z.number().int().nonnegative().nullable(),
+})
+
+// Locators may contain credentials; manifests keep only a redacted description.
+export function inputSource(source: string) {
+  try {
+    const url = new URL(source)
+    return `${url.protocol}//${url.host}/[redacted locator]`
+  } catch {
+    return source.includes('://') ? '[unavailable locator]' : '[Appium-host path]'
+  }
+}
+
 export const RevisionQuery = z.object({ after: DbIdParam.optional() })
 export const RevisionPage = z.object({
   revisions: z.array(z.object({ runId: DbId, commit: Commit, cleanupPending: z.boolean() })),
@@ -109,6 +190,7 @@ export const LeaseBody = z.object({
   commits: z.array(Commit).min(1),
   runId: DbId.optional(),
   cleanup: z.boolean().default(false), // upgraded runners acknowledge stopped execution
+  inputs: z.boolean().default(false), // upgraded runners verify immutable run inputs
 })
 
 export const Lease = z.object({
@@ -122,6 +204,9 @@ export const Lease = z.object({
   leaseSeconds: z.number().int(),
   sessionResetAt: z.coerce.date(), // new session required when this marker changes after a health pause
   cleanupRequired: z.boolean().default(false),
+  inputProtocol: z.literal(1).optional(),
+  inputIntent: RunInputIntent.nullable().default(null),
+  expectedInputs: ResolvedInputs.nullable().default(null),
 })
 export type Lease = z.infer<typeof Lease>
 
@@ -245,6 +330,7 @@ export const RunSummary = z.object({
   appBuild: z.string(),
   commit: z.string(),
   trigger: z.string(),
+  inputManifest: InputManifest.default({ intent: null, expected: null, resolved: null }),
   split: z.enum(['queue', 'fixed']),
   status: z.enum(['running', 'passed', 'failed']),
   createdAt: z.coerce.date(),
@@ -285,7 +371,7 @@ export type RunSummary = z.infer<typeof RunSummary>
 export const RunList = z.object({
   older: z.number().int().nullable(),
   runs: z.array(
-    RunSummary.omit({ scenarios: true, devices: true }).extend({
+    RunSummary.omit({ scenarios: true, devices: true, inputManifest: true }).extend({
       counts: z.record(ScenarioStatus, z.number().int()), // countStatuses() of its scenarios
     }),
   ),
@@ -306,6 +392,8 @@ export const Attempt = z.object({
   finishedAt: z.coerce.date().nullable(),
   durationMs: z.number().int().nullable(),
   error: z.string().nullable(),
+  inputRuntime: InputRuntime.nullable().default(null),
+  inputsVerified: z.boolean().default(false),
   screenshot: z.boolean(), // a file is saved; get it from the dashboard files route
   log: z.boolean(),
   ...AttemptOrigin.shape,

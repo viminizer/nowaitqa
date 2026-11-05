@@ -10,6 +10,8 @@ import {
   type DeviceConnectivity,
   DeviceEnabledBody,
   DeviceList,
+  ManifestPage,
+  ManifestQuery,
   RunAgainBody,
   RunDetail,
   RunList,
@@ -27,6 +29,7 @@ import {
   cancelRun,
   createRun,
   getRunDetail,
+  inputManifestPage,
   listAttempts,
   listRuns,
   retryAttempt,
@@ -36,6 +39,26 @@ import {
 import { readArtifact } from '../storage/index.ts'
 
 export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
+  app.get(
+    '/dashboard/api/runs/:id/manifest',
+    {
+      schema: {
+        params: z.object({ id: DbIdParam }),
+        querystring: ManifestQuery,
+        response: { 200: ManifestPage, 404: ApiError },
+      },
+    },
+    async (req, reply) => {
+      const page = await inputManifestPage(req.params.id, req.query.page)
+      if (!page) return reply.code(404).send({ error: 'run not found' })
+      return reply
+        .header(
+          'content-disposition',
+          `attachment; filename="run-${req.params.id}-inputs-${req.query.page}.json"`,
+        )
+        .send(page)
+    },
+  )
   app.get(
     '/dashboard/api/runs',
     {

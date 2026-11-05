@@ -7,8 +7,10 @@ import {
   DEVICE_CONTACT_TIMEOUT_MS,
   Device,
   DevicePause,
+  type InputRuntime,
   Lease,
   messageOf,
+  ResolvedInputs,
   type ResultBody,
   RevisionPage,
   RunSummary,
@@ -98,6 +100,24 @@ export async function getDevices(signal?: AbortSignal) {
   return z.array(Device).parse(await res.json())
 }
 
+export async function verifyInputs(
+  queueId: number,
+  device: string,
+  inputs: ResolvedInputs,
+  signal: AbortSignal,
+) {
+  const res = await call('POST', '/inputs', [200], { queueId, device, inputs }, 10_000, signal)
+  return ResolvedInputs.parse(await res.json())
+}
+export async function sendInputRuntime(
+  queueId: number,
+  device: string,
+  runtime: InputRuntime,
+  signal: AbortSignal,
+) {
+  await call('POST', '/inputs/runtime', [204], { queueId, device, runtime }, 10_000, signal)
+}
+
 // A separate request: keep reporting contact during long polls, Appium startup and cooldowns.
 export async function contactDevice(device: Device, signal: AbortSignal) {
   await call(
@@ -140,7 +160,7 @@ export async function lease(
     'POST',
     '/lease',
     [200, 204, 404, 423],
-    { device, commits, runId, cleanup: true },
+    { device, commits, runId, cleanup: true, inputs: true },
     35_000,
     signal,
   )

@@ -1,9 +1,30 @@
-import { ApiError, CreatedRun, CreateRunBody, DbIdParam, RunSummary } from '@nowait/shared'
+import {
+  ApiError,
+  CreatedRun,
+  CreateRunBody,
+  DbIdParam,
+  ManifestPage,
+  ManifestQuery,
+  RunSummary,
+} from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { BadRunError, createRun, getRun } from '../queue.ts'
+import { BadRunError, createRun, getRun, inputManifestPage } from '../queue.ts'
 
 export const runRoutes: FastifyPluginAsyncZod = async (app) => {
+  app.get(
+    '/runs/:id/manifest',
+    {
+      schema: {
+        params: z.object({ id: DbIdParam }),
+        querystring: ManifestQuery,
+        response: { 200: ManifestPage, 404: ApiError },
+      },
+    },
+    async (req, reply) =>
+      (await inputManifestPage(req.params.id, req.query.page)) ??
+      reply.code(404).send({ error: 'run not found' }),
+  )
   // Called by Jenkins when a build is ready.
   app.post(
     '/runs',

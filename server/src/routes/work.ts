@@ -4,29 +4,60 @@ import {
   Catalog,
   DevicePause,
   HeartbeatBody,
+  InputRuntimeBody,
   Lease,
   LeaseBody,
+  ResolvedInputs,
   ResultBody,
   RevisionPage,
   RevisionQuery,
+  VerifyInputsBody,
 } from '@nowait/shared'
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import {
   heartbeat,
+  InputConflictError,
   leaseNext,
   PausedDeviceError,
+  recordInputRuntime,
   referencedRevisions,
   releaseLease,
   saveCatalog,
   submitResult,
   UnknownDeviceError,
+  verifyInputs,
   waitForWork,
 } from '../queue.ts'
 
 const LONG_POLL_MS = 30_000
 
 export const workRoutes: FastifyPluginAsyncZod = async (app) => {
+  app.post(
+    '/inputs',
+    { schema: { body: VerifyInputsBody, response: { 200: ResolvedInputs, 409: ApiError } } },
+    async (req, reply) => {
+      try {
+        return await verifyInputs(req.body.queueId, req.body.device, req.body.inputs)
+      } catch (err) {
+        if (err instanceof InputConflictError) return reply.code(409).send({ error: err.message })
+        throw err
+      }
+    },
+  )
+  app.post(
+    '/inputs/runtime',
+    { schema: { body: InputRuntimeBody, response: { 204: z.void(), 409: ApiError } } },
+    async (req, reply) => {
+      try {
+        await recordInputRuntime(req.body.queueId, req.body.device, req.body.runtime)
+        return reply.code(204).send()
+      } catch (err) {
+        if (err instanceof InputConflictError) return reply.code(409).send({ error: err.message })
+        throw err
+      }
+    },
+  )
   app.get(
     '/catalog/revisions',
     { schema: { querystring: RevisionQuery, response: { 200: RevisionPage } } },
@@ -62,6 +93,7 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
             req.body.runId,
             controller.signal,
             req.body.cleanup,
+            req.body.inputs,
           )
           if (lease) return lease
           const left = deadline - Date.now()
@@ -95,7 +127,14 @@ export const workRoutes: FastifyPluginAsyncZod = async (app) => {
   })
 
   app.post('/results', { schema: { body: ResultBody } }, async (req, reply) => {
-    const { saved, problems } = await submitResult(req.body)
+    let submitted: Awaited<ReturnType<typeof submitResult>>
+    try {
+      submitted = await submitResult(req.body)
+    } catch (err) {
+      if (err instanceof InputConflictError) return reply.code(409).send({ error: err.message })
+      throw err
+    }
+    const { saved, problems } = submitted
     // the result is saved anyway; the store's trouble goes to the log too
     for (const problem of problems) req.log.error(`result ${req.body.queueId}: ${problem}`)
     return saved ? reply.code(204).send() : reply.code(409).send({ error: 'lease is gone' })

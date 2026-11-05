@@ -1,4 +1,6 @@
 // One worker per phone: take the next scenario, stop its executor, report it, repeat.
+
+import { dirname } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   type AttemptOrigin,
@@ -7,6 +9,7 @@ import {
   every,
   type Lease,
   messageOf,
+  type ResolvedInputs,
 } from '@nowait/shared'
 import { type Browser, remote } from 'webdriverio'
 import { z } from 'zod'
@@ -17,11 +20,15 @@ import {
   lease,
   ResultNotSentError,
   releaseLease,
+  sendInputRuntime,
   sendResult,
+  verifyInputs,
 } from './api.ts'
 import { type AppiumGate, openAppiumGate } from './appium-gate.ts'
 import { pinCatalog, type ScenarioPin } from './catalog.ts'
 import { config } from './config.ts'
+import { scenarioIdentity, stageApp } from './input-files.ts'
+import { inputRuntime } from './input-runtime.ts'
 import { type LeaseGuard, watchLease } from './lease-guard.ts'
 import { log } from './log.ts'
 import { runScenario } from './scenario.ts'
@@ -41,6 +48,15 @@ export async function runWorker(device: Device, shutdown = new AbortController()
     },
   )
   let session: Session | null = null
+  let sessionApp: Awaited<ReturnType<typeof stageApp>> | undefined
+  const cleanupSession = async () => {
+    const clean = await gate.cleanup()
+    if (clean) {
+      await sessionApp?.release()
+      sessionApp = undefined
+    }
+    return clean
+  }
   const acknowledge = async (current: Lease) => {
     try {
       return await releaseLease(current.queueId, device.name)
@@ -57,6 +73,8 @@ export async function runWorker(device: Device, shutdown = new AbortController()
       let stopped = true
       let phase: AttemptOrigin['phase'] = 'setup'
       let scenario: ScenarioPin | undefined
+      let prepared: Awaited<ReturnType<typeof stageApp>> | undefined
+      let verifiedInputs: ResolvedInputs | undefined
       try {
         const catalog = pinCatalog()
         try {
@@ -72,24 +90,78 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         }
         if (!current.cleanupRequired)
           throw new Error('upgrade the server: cleanup acknowledgement protocol is required')
+        if (current.inputProtocol !== 1)
+          throw new Error('upgrade the server: run input verification protocol is required')
         guard = watchLease(device, current, shutdown)
         let headers = gate.activate(guard)
         await guard.renew()
+        if (current.inputIntent) {
+          const identity = await scenarioIdentity(
+            dirname(scenario.file),
+            current.commit,
+            guard.signal,
+          )
+          prepared = await stageApp(current.appBuild, device, guard.signal)
+          verifiedInputs = await verifyInputs(
+            current.queueId,
+            device.name,
+            {
+              app: prepared.identity,
+              scenarios: identity,
+              config: {
+                sessionMode: config.SESSION_MODE,
+                scenarioTimeoutSeconds: config.SCENARIO_TIMEOUT_SECONDS,
+              },
+            },
+            guard.signal,
+          )
+        }
         if (
           config.SESSION_MODE === 'reuse' &&
           session?.runId === current.runId &&
           session.resetAt === current.sessionResetAt.getTime()
         ) {
+          await prepared?.release()
+          prepared = undefined
           await resetApp(device, session)
         } else {
           phase = 'cleanup'
-          if (!(await gate.cleanup())) throw new Error('previous session cleanup not confirmed')
+          if (!(await cleanupSession())) throw new Error('previous session cleanup not confirmed')
           session = null
           headers = gate.activate(guard)
           phase = 'setup'
-          session = await openSession(device, current, gate)
+          sessionApp = prepared
+          prepared = undefined
+          session = await openSession(
+            device,
+            sessionApp ? { ...current, appBuild: sessionApp.path } : current,
+            gate,
+          )
         }
         guard.check()
+        if (current.inputIntent)
+          await sendInputRuntime(
+            current.queueId,
+            device.name,
+            await inputRuntime(device, session.driver, guard.signal),
+            guard.signal,
+          )
+        // Staging and session startup can take minutes. A local edit during that interval
+        // must fail before the executor imports source under the previously pinned identity.
+        if (verifiedInputs)
+          await verifyInputs(
+            current.queueId,
+            device.name,
+            {
+              ...verifiedInputs,
+              scenarios: await scenarioIdentity(
+                dirname(scenario.file),
+                current.commit,
+                guard.signal,
+              ),
+            },
+            guard.signal,
+          )
         stopped = false // retain the checkout on an unexpected failure until exit is confirmed
         const execution = await runScenario(
           session.driver,
@@ -108,7 +180,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
           guard.signal.aborted ||
           gate.needsCleanup
         ) {
-          clean = (await gate.cleanup()) && stopped
+          clean = (await cleanupSession()) && stopped
           session = null
         }
         gate.stopCommands()
@@ -137,7 +209,7 @@ export async function runWorker(device: Device, shutdown = new AbortController()
             : 'lease_lost'
           : null
         gate.stopCommands()
-        const clean = (await gate.cleanup()) && stopped
+        const clean = (await cleanupSession()) && stopped
         guard?.stop()
         session = null
         if (current && clean) await acknowledge(current)
@@ -176,12 +248,14 @@ export async function runWorker(device: Device, shutdown = new AbortController()
         await pause(ERROR_PAUSE_MS, shutdown)
       } finally {
         guard?.stop()
+        await prepared?.release()
         if (stopped) scenario?.release()
       }
     }
   } finally {
     stopContact()
-    if (!(await gate.cleanup())) log(device.name, 'worker stopped with unconfirmed session cleanup')
+    if (!(await cleanupSession()))
+      log(device.name, 'worker stopped with unconfirmed session cleanup')
     await gate.close()
   }
 }

@@ -1,4 +1,11 @@
-import type { AttemptOrigin, Catalog, RecoveryAction } from '@nowait/shared'
+import type {
+  AttemptOrigin,
+  Catalog,
+  InputRuntime,
+  RecoveryAction,
+  ResolvedInputs,
+  RunInputIntent,
+} from '@nowait/shared'
 import { sql } from 'drizzle-orm'
 import {
   boolean,
@@ -48,6 +55,9 @@ export const runs = pgTable(
     maxInfrastructureRecoveries: integer(),
     maxRunInfrastructureRecoveries: integer(),
     infrastructureRecoveries: integer().notNull().default(0),
+    inputIntent: jsonb().$type<RunInputIntent>(),
+    resolvedInputs: jsonb().$type<ResolvedInputs>(),
+    expectedInputs: jsonb().$type<ResolvedInputs>(),
   },
   // notifications: finished runs by when they finished
   (t) => [
@@ -81,6 +91,8 @@ export const queue = pgTable(
     leasedAt: timestamp({ withTimezone: true }),
     leaseUntil: timestamp({ withTimezone: true }),
     cleanupPending: boolean().notNull().default(false),
+    inputRuntime: jsonb().$type<InputRuntime>(),
+    inputsVerified: boolean().notNull().default(false),
   },
   (t) => [
     index('queue_pending_idx').on(t.runId, t.id).where(sql`status = 'pending'`),

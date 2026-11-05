@@ -7,8 +7,12 @@ import {
   type Catalog,
   type CreateRunBody,
   countStatuses,
+  FullCommit,
+  InputRuntime,
+  inputSource,
   type Lease,
   messageOf,
+  ResolvedInputs,
   type ResultBody,
   type RunDetail,
   type RunList,
@@ -21,6 +25,7 @@ import {
   count,
   desc,
   eq,
+  getTableColumns,
   inArray,
   isNotNull,
   isNull,
@@ -115,6 +120,8 @@ export async function createRun(body: CreateRunBody) {
         : 'no runner has sent its scenarios yet',
     )
   }
+  if (!FullCommit.safeParse(catalog.commit).success)
+    throw new BadRunError('a full scenario revision is required; upgrade the catalog runner')
   const scenarioIds = catalog.scenarios
     .filter((s) => s.platforms.includes(body.platform))
     .map((s) => s.id)
@@ -125,7 +132,9 @@ export async function createRun(body: CreateRunBody) {
   return insertRun({ ...body, commit: catalog.commit }, items)
 }
 
-type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'>
+type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'> & {
+  expectedInputs?: ResolvedInputs
+}
 
 // How long each scenario usually takes on a platform: the average of its last EXPECTED_FROM
 // passing attempts. Failed ones don't count: a failure can stop early or run into a timeout.
@@ -149,6 +158,7 @@ async function expectedTimes(platform: Run['platform'], scenarioIds: string[]) {
 // Saves a run and queues its items (scenario ids, in order), then wakes waiting phones. Each item
 // gets its scenario's expected time, so phones take the longest first (leaseNext).
 async function insertRun(newRun: NewRun, items: string[]) {
+  const { expectedInputs, ...fields } = newRun
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
   const phones =
     newRun.split === 'fixed'
@@ -175,7 +185,16 @@ async function insertRun(newRun: NewRun, items: string[]) {
     const [run] = await tx
       .insert(runs)
       .values({
-        ...newRun,
+        ...fields,
+        inputIntent: {
+          version: 1,
+          platform: fields.platform,
+          commit: fields.commit,
+          appSource: inputSource(fields.appBuild),
+          scenarios: items,
+          split: fields.split,
+        },
+        expectedInputs,
         maxAttempts: config.MAX_ATTEMPTS,
         maxInfrastructureRecoveries: config.MAX_INFRA_RECOVERIES,
         maxRunInfrastructureRecoveries: config.MAX_RUN_INFRA_RECOVERIES,
@@ -199,7 +218,15 @@ async function insertRun(newRun: NewRun, items: string[]) {
 
 type Run = typeof runs.$inferSelect
 
-const recoveryOf = (run: Run): RunSummary['recovery'] =>
+const recoveryOf = (
+  run: Pick<
+    Run,
+    | 'maxAttempts'
+    | 'maxInfrastructureRecoveries'
+    | 'maxRunInfrastructureRecoveries'
+    | 'infrastructureRecoveries'
+  >,
+): RunSummary['recovery'] =>
   run.maxAttempts === null
     ? null
     : {
@@ -229,7 +256,7 @@ function within<T>(ms: number, work: Promise<T>) {
 
 // A scenario's final status, from its latest attempt.
 function scenarioStatus(
-  run: Run,
+  run: Pick<Run, 'status'>,
   attempt: number,
   result: 'passed' | 'failed' | null,
   queueStatus: QueueRow['status'],
@@ -242,15 +269,16 @@ function scenarioStatus(
   return 'pending'
 }
 
-const runDuration = (run: Run) =>
+const runDuration = (run: Pick<Run, 'createdAt' | 'finishedAt'>) =>
   run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
 
 const RUNS_PAGE = 50
 
 // The dashboard's runs list: RUNS_PAGE runs older than `before`, newest first (R24).
 export async function listRuns(before?: number): Promise<RunList> {
+  const { inputIntent, resolvedInputs, expectedInputs, ...columns } = getTableColumns(runs)
   const page = await db
-    .select()
+    .select(columns)
     .from(runs)
     .where(before ? lt(runs.id, before) : undefined)
     .orderBy(desc(runs.id))
@@ -369,6 +397,11 @@ async function summarize(run: Run): Promise<RunSummary> {
   const durationMs = runDuration(run)
   return {
     ...run,
+    inputManifest: {
+      intent: run.inputIntent,
+      expected: run.expectedInputs,
+      resolved: run.resolvedInputs,
+    },
     recovery: recoveryOf(run),
     durationMs,
     scenarios: await scenariosOf(run),
@@ -439,6 +472,8 @@ export async function listAttempts(runId: number, page: number): Promise<Attempt
       recoveryAction: sql<Attempt['recoveryAction']>`coalesce(${results.recoveryAction}, 'none')`,
       recoveryNote: results.recoveryNote,
       retryQueueId: results.retryQueueId,
+      inputRuntime: queue.inputRuntime,
+      inputsVerified: queue.inputsVerified,
     })
     .from(queue)
     .leftJoin(results, eq(results.queueId, queue.id))
@@ -473,6 +508,7 @@ export async function leaseNext(
   currentRunId = 0,
   signal: AbortSignal,
   cleanup = false,
+  inputs = false,
 ): Promise<Lease | null> {
   signal.throwIfAborted()
   const lease = await db.transaction(async (tx) => {
@@ -520,6 +556,7 @@ export async function leaseNext(
           eq(queue.status, 'pending'),
           eq(runs.platform, device.platform),
           inArray(runs.commit, commits), // only runs whose scenarios this runner has
+          inputs ? undefined : isNull(runs.inputIntent),
           // a fixed split's item is its phone's, or anyone's once that phone is off
           or(
             isNull(queue.assignedDevice),
@@ -568,6 +605,9 @@ export async function leaseNext(
       leaseSeconds: config.LEASE_SECONDS,
       sessionResetAt: device.healthSince,
       cleanupRequired: cleanup,
+      inputProtocol: 1 as const,
+      inputIntent: row.run.inputIntent,
+      expectedInputs: row.run.resolvedInputs ?? row.run.expectedInputs,
     }
   })
   // COMMIT is asynchronous too: a disconnect during it needs compensation after it finishes.
@@ -615,7 +655,16 @@ export async function heartbeat(queueId: number, device: string, scenarioStarted
   const updated = await db
     .update(queue)
     .set({ leaseUntil: leaseEnd(), ...(scenarioStarted ? { scenarioStarted: true } : {}) })
-    .where(and(eq(queue.id, queueId), eq(queue.device, device), eq(queue.status, 'leased')))
+    .where(
+      and(
+        eq(queue.id, queueId),
+        eq(queue.device, device),
+        eq(queue.status, 'leased'),
+        scenarioStarted
+          ? sql`(${queue.inputsVerified} OR NOT EXISTS (SELECT 1 FROM ${runs} r WHERE r.id = ${queue.runId} AND r.input_intent IS NOT NULL))`
+          : undefined,
+      ),
+    )
     .returning({ id: queue.id })
   return updated.length > 0
 }
@@ -653,6 +702,11 @@ export async function submitResult(body: ResultBody) {
     .where(leasedHere)
     .returning()
   if (!row) return { saved: false, problems: [] }
+  if (!row.inputsVerified && (body.status === 'passed' || body.scenarioStarted === true)) {
+    const run = await db.query.runs.findFirst({ where: eq(runs.id, row.runId) })
+    if (run?.inputIntent)
+      throw new InputConflictError('verify run inputs before scenario execution or a passed result')
+  }
   // The slot keeps names apart when a scenario repeats in one run.
   const name = `${row.scenarioId}-${row.slot}-${row.attempt}`
   // A file that can't be stored never changes the result (R50): it is saved without it. The result
@@ -812,20 +866,100 @@ export async function cancelRun(runId: number) {
 async function startAgain(run: Run, scenarioIds: string[], trigger: string) {
   if (run.status === 'running') throw new BadRunError(`run #${run.id} is still running`)
   if (scenarioIds.length === 0) throw new BadRunError(`run #${run.id} has no failed scenarios`)
-  // Phones only take runs on their runner's newest scenario commit or the one before (catalog.ts).
-  // ponytail: the 2 newest catalogs stand for that; per-runner commits if runners drift apart.
-  const recent = await db
-    .select({ commit: catalogs.commit })
-    .from(catalogs)
-    .orderBy(desc(catalogs.updatedAt))
-    .limit(2)
-  if (!recent.some((c) => c.commit === run.commit)) {
-    throw new BadRunError(
-      `the runners no longer have the scenarios of commit ${run.commit.slice(0, 7)}: start a new run instead`,
-    )
-  }
+  if (!run.inputIntent || !run.resolvedInputs)
+    throw new BadRunError('verified inputs are unavailable for this run; start a new run instead')
   const { platform, appBuild, commit, split } = run
-  return insertRun({ platform, appBuild, commit, split, trigger }, scenarioIds)
+  return insertRun(
+    { platform, appBuild, commit, split, trigger, expectedInputs: run.resolvedInputs },
+    scenarioIds,
+  )
+}
+
+export class InputConflictError extends Error {}
+
+// Queue→run lock order matches results/cancellation. The first verifier binds the identity;
+// every later attempt/replay must resolve the same bytes and effective configuration.
+export async function verifyInputs(queueId: number, device: string, inputs: ResolvedInputs) {
+  return db.transaction(async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(queue)
+      .where(
+        and(
+          eq(queue.id, queueId),
+          eq(queue.device, device),
+          eq(queue.status, 'leased'),
+          sql`${queue.leaseUntil} > now()`,
+        ),
+      )
+      .for('update')
+    if (!item) throw new InputConflictError('input verification lease is gone')
+    const [run] = await tx.select().from(runs).where(eq(runs.id, item.runId)).for('no key update')
+    if (!run?.inputIntent || run.status !== 'running')
+      throw new InputConflictError('run input manifest is unavailable')
+    if (inputs.scenarios.commit !== run.commit)
+      throw new InputConflictError('scenario input revision does not match the run')
+    if (
+      (run.expectedInputs &&
+        JSON.stringify(ResolvedInputs.parse(run.expectedInputs)) !== JSON.stringify(inputs)) ||
+      (run.resolvedInputs &&
+        JSON.stringify(ResolvedInputs.parse(run.resolvedInputs)) !== JSON.stringify(inputs))
+    )
+      throw new InputConflictError(
+        'resolved app, scenario dependencies or configuration differ from the recorded run inputs',
+      )
+    if (!run.resolvedInputs)
+      await tx.update(runs).set({ resolvedInputs: inputs }).where(eq(runs.id, run.id))
+    await tx.update(queue).set({ inputsVerified: true }).where(eq(queue.id, queueId))
+    return inputs
+  })
+}
+
+export async function recordInputRuntime(queueId: number, device: string, runtime: InputRuntime) {
+  return db.transaction(async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(queue)
+      .where(
+        and(
+          eq(queue.id, queueId),
+          eq(queue.device, device),
+          eq(queue.status, 'leased'),
+          sql`${queue.leaseUntil} > now()`,
+        ),
+      )
+      .for('update')
+    if (!item) throw new InputConflictError('runtime observation lease is gone')
+    if (!item.inputsVerified)
+      throw new InputConflictError('verify inputs before recording runtime observations')
+    if (
+      item.inputRuntime &&
+      JSON.stringify(InputRuntime.parse(item.inputRuntime)) !== JSON.stringify(runtime)
+    )
+      throw new InputConflictError('runtime observation is already recorded')
+    if (!item.inputRuntime)
+      await tx.update(queue).set({ inputRuntime: runtime }).where(eq(queue.id, queueId))
+  })
+}
+
+export async function inputManifestPage(runId: number, page: number) {
+  const items = await listAttempts(runId, page)
+  if (!items) return null
+  const run = await db.query.runs.findFirst({ where: eq(runs.id, runId) })
+  if (!run) return null
+  return {
+    manifest: {
+      intent: run.inputIntent,
+      expected: run.expectedInputs,
+      resolved: run.resolvedInputs,
+    },
+    attempts: items.attempts.map(({ queueId, device, inputRuntime }) => ({
+      queueId,
+      device,
+      runtime: inputRuntime,
+    })),
+    next: items.next,
+  }
 }
 
 // All of a run's scenarios (repeats too), or only the failed ones. Null when there is no such run.

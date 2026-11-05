@@ -30,6 +30,7 @@ const Env = z.object({
     .max(Number.MAX_SAFE_INTEGER)
     .default(5 * 1024 ** 3),
   SCENARIO_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(600),
+  INPUT_MAX_BYTES: z.coerce.number().int().min(1_048_576).max(1_073_741_824).default(536_870_912),
   SESSION_MODE: z.enum(['reuse', 'fresh']).default('reuse'),
 })
 
