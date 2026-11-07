@@ -307,6 +307,11 @@ export function RunPage({
           }))}
         />
       )}
+      {state.data?.launchId && (
+        <p>
+          <Link href={`#/launches/${state.data.launchId}`}>View Android + iOS launch</Link>
+        </p>
+      )}
       <DataPanel
         title={
           selected === 'attempts'

@@ -1,5 +1,5 @@
 export { duration, time } from '../lib/format.ts'
-export { openRun } from '../lib/navigation.ts'
+export { openLaunch, openRun } from '../lib/navigation.ts'
 export { Action, ActionError } from './Action.tsx'
 export { Button } from './Button.tsx'
 export { DataPanel } from './DataPanel.tsx'

@@ -1,4 +1,4 @@
-import { CreatedRun } from '@nowait/shared'
+import { CreatedLaunch, CreatedRun } from '@nowait/shared'
 import { useSyncExternalStore } from 'react'
 
 const onHashChange = (update: () => void) => {
@@ -13,4 +13,8 @@ export function useHashLocation() {
 }
 export const openRun = (answer: unknown) => {
   location.hash = `#/runs/${CreatedRun.parse(answer).id}`
+}
+
+export const openLaunch = (answer: unknown) => {
+  location.hash = `#/launches/${CreatedLaunch.parse(answer).id}`
 }

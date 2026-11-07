@@ -2,6 +2,7 @@ import type {
   AttemptOrigin,
   AttemptProgress,
   Catalog,
+  CreateLaunchBody,
   ExecutionProfile,
   FixtureReason,
   FixtureState,
@@ -25,6 +26,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from 'drizzle-orm/pg-core'
 
 export const devices = pgTable('devices', {
@@ -43,10 +45,18 @@ export const devices = pgTable('devices', {
   healthSince: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })
 
+// Request identity persists with the launch, so a lost response can be retried safely.
+export const launches = pgTable('launches', {
+  id: uuid().primaryKey(),
+  request: jsonb().$type<CreateLaunchBody>().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+})
+
 export const runs = pgTable(
   'runs',
   {
     id: serial().primaryKey(),
+    launchId: uuid().references(() => launches.id),
     platform: text({ enum: ['android', 'ios'] }).notNull(),
     appBuild: text().notNull(),
     commit: text().notNull(),
@@ -75,6 +85,7 @@ export const runs = pgTable(
   },
   // notifications: finished runs by when they finished
   (t) => [
+    uniqueIndex('runs_launch_platform_idx').on(t.launchId, t.platform),
     index('runs_finished_idx').on(t.finishedAt).where(sql`status <> 'running'`), // notifications
     index('runs_created_idx').on(t.createdAt), // artifact cleanup: runs older than ARTIFACT_DAYS
     index('runs_active_idx').on(t.id).where(sql`status = 'running'`), // revision references

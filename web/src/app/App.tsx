@@ -7,6 +7,9 @@ import { AppShell } from './AppShell.tsx'
 const RunsPage = lazy(() =>
   import('../features/runs/RunsPage.tsx').then((module) => ({ default: module.RunsPage })),
 )
+const LaunchPage = lazy(() =>
+  import('../features/runs/LaunchPage.tsx').then((module) => ({ default: module.LaunchPage })),
+)
 const RunPage = lazy(() =>
   import('../features/runs/RunPage.tsx').then((module) => ({ default: module.RunPage })),
 )
@@ -25,13 +28,16 @@ const HistoryPage = lazy(() =>
 )
 export function App() {
   const { path, query, params } = useHashLocation()
+  const launchId = path.match(/^\/launches\/([^/]+)$/)?.[1]
   const runId = path.match(/^\/runs\/(\d+)$/)?.[1]
   const page = Math.max(0, Number.parseInt(params.get('page') ?? '', 10) || 0)
   return (
     <AppShell path={path}>
       <ErrorBoundary key={`${path}?${query}`}>
         <Suspense fallback={<Loading />}>
-          {runId ? (
+          {launchId ? (
+            <LaunchPage id={launchId} />
+          ) : runId ? (
             <RunPage id={Number(runId)} page={page} view={params.get('view') ?? 'overview'} />
           ) : path === '/history' ? (
             <HistoryPage params={params} />
