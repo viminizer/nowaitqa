@@ -924,3 +924,236 @@ export const ScenarioHistoryPage = z.object({
     .nullable(),
 })
 export type ScenarioHistoryPage = z.infer<typeof ScenarioHistoryPage>
+
+// Guided setup is separate from scenario execution. Claims never grant authority by TTL alone.
+export const VIRTUAL_TARGET_LIMIT = 100
+export const SETUP_CONTACT_SECONDS = 60
+export const SETUP_MAX_SECONDS = 450
+export const SetupHostName = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(/^[^\p{Cc}]+$/u)
+export const VirtualTarget = z
+  .object({
+    key: z.string().min(1).max(512),
+    platform: Platform,
+    identifier: z.string().min(1).max(255),
+    name: z.string().min(1).max(255),
+    runtime: z.string().max(255),
+    udid: z.string().min(1).max(255).nullable(),
+    state: z.enum(['running', 'starting', 'stopped', 'unavailable']),
+    issue: z.enum(['runtime_unavailable', 'identity_ambiguous']).nullable(),
+  })
+  .superRefine((t, ctx) => {
+    if (t.key !== `${t.platform}:${t.identifier}`)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['key'],
+        message: 'target key must match its platform and identifier',
+      })
+    if (
+      t.platform === 'ios' &&
+      (!z.uuid().safeParse(t.identifier).success || t.udid !== t.identifier)
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['identifier'],
+        message: 'iOS target requires its Simulator UUID',
+      })
+    if (
+      t.platform === 'android' &&
+      (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(t.identifier) ||
+        (t.udid !== null && !/^emulator-\d+$/.test(t.udid)))
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['identifier'],
+        message: 'Android target identity is invalid',
+      })
+  })
+export type VirtualTarget = z.infer<typeof VirtualTarget>
+export const SetupReason = z.enum([
+  'discovery_pending',
+  'android_tools',
+  'xcode_tools',
+  'ios_unsupported',
+  'runtime_unavailable',
+  'inventory_limit',
+  'inventory_invalid',
+  'identity_ambiguous',
+  'appium_unavailable',
+  'driver_missing',
+  'not_running',
+  'port_conflict',
+  'registration_conflict',
+  'device_busy',
+  'timeout',
+  'cancelled',
+  'runner_offline',
+  'owner_lost',
+  'command_unconfirmed',
+  'setup_failed',
+  'already_registered',
+  'operator_resolved',
+])
+export type SetupReason = z.infer<typeof SetupReason>
+export function setupReasonText(reason: SetupReason | null) {
+  return reason
+    ? {
+        discovery_pending: 'Waiting for device discovery',
+        android_tools: 'Android tools unavailable; configure the SDK paths on this machine',
+        xcode_tools: 'Xcode tools unavailable; check the selected Xcode installation',
+        ios_unsupported: 'iOS Simulators require a macOS runner',
+        runtime_unavailable: 'Install the required runtime on this machine',
+        inventory_limit: 'Too many installed devices; discovery supports up to 100 targets',
+        inventory_invalid: 'Device discovery returned an unsupported response',
+        identity_ambiguous:
+          'Cannot safely identify this emulator; check its ADB connection or duplicate instances',
+        appium_unavailable: 'Local Appium is unavailable; start it and check APPIUM_URL',
+        driver_missing: 'Install the required Appium automation driver on this machine',
+        not_running: 'Device is stopped; choose Start and register',
+        port_conflict:
+          'No safe free ports are available; check existing registrations and listeners',
+        registration_conflict: 'Existing registration differs; review it before retrying setup',
+        device_busy: 'Device has active work or a cleanup reservation',
+        timeout: 'Setup reached its deadline; refresh the device state before retrying',
+        cancelled: 'Setup cancelled; a device already started may remain running',
+        runner_offline: 'Runner disconnected before setup could start',
+        owner_lost:
+          'Previous setup stopped reporting; confirm its commands have stopped before retrying',
+        command_unconfirmed:
+          'Command termination is unconfirmed; stop the old setup runner before recovery',
+        setup_failed: 'Setup could not complete; check the runner and refresh discovery',
+        already_registered: 'Existing registration reused without changing its settings',
+        operator_resolved: 'Previous setup confirmed stopped; refresh discovery before retrying',
+      }[reason]
+    : ''
+}
+export const LocalAppiumUrl = z.url().refine((v) => {
+  const u = new URL(v)
+  return (
+    ['http:', 'https:'].includes(u.protocol) &&
+    ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) &&
+    !u.username &&
+    !u.password
+  )
+}, 'automatic setup requires a local Appium URL without inline credentials')
+export const VirtualInventory = z.object({
+  revision: z.uuid(),
+  targets: z
+    .array(VirtualTarget)
+    .max(VIRTUAL_TARGET_LIMIT)
+    .refine((t) => new Set(t.map((v) => v.key)).size === t.length, 'duplicate target identities'),
+  issues: z.array(SetupReason).max(8),
+})
+export type VirtualInventory = z.infer<typeof VirtualInventory>
+export const SetupContactBody = z.object({
+  host: SetupHostName,
+  session: z.uuid(),
+  os: z.enum(['darwin', 'linux']),
+  appiumUrl: LocalAppiumUrl,
+  inventory: VirtualInventory.optional(),
+  active: z.object({ id: DbId, claim: z.uuid() }).optional(),
+})
+export type SetupContactBody = z.infer<typeof SetupContactBody>
+export const SetupContactReply = z.object({ jobAlive: z.boolean(), cancelRequested: z.boolean() })
+export const SetupOwner = SetupContactBody.pick({ host: true, session: true })
+export type SetupOwner = z.infer<typeof SetupOwner>
+export const SetupAuthority = SetupOwner.extend({ id: DbId, claim: z.uuid() })
+export type SetupAuthority = z.infer<typeof SetupAuthority>
+export const SetupState = z.enum([
+  'queued',
+  'active',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'interrupted',
+])
+export type SetupState = z.infer<typeof SetupState>
+export const SetupStage = z.enum([
+  'queued',
+  'checking',
+  'starting',
+  'waiting',
+  'registering',
+  'done',
+])
+export type SetupStage = z.infer<typeof SetupStage>
+export const SetupJob = z.object({
+  id: DbId,
+  host: SetupHostName,
+  target: VirtualTarget,
+  boot: z.boolean(),
+  status: SetupState,
+  stage: SetupStage,
+  reason: SetupReason.nullable(),
+  deviceName: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+  cancelRequested: z.boolean(),
+  canResolve: z.boolean(),
+  canCancel: z.boolean(),
+})
+export type SetupJob = z.infer<typeof SetupJob>
+export const SetupClaim = SetupJob.extend({ claim: z.uuid(), existing: Device.nullable() })
+export type SetupClaim = z.infer<typeof SetupClaim>
+export type SetupCreateBody = z.infer<typeof SetupCreateBody>
+export const SetupCreateBody = z.object({
+  host: SetupHostName,
+  key: VirtualTarget.shape.key,
+  boot: z.boolean(),
+})
+export const SetupCreated = z.object({ id: DbId })
+export const SetupProgressBody = SetupAuthority.extend({ stage: SetupStage })
+export type SetupProgressBody = z.infer<typeof SetupProgressBody>
+export const SetupReserveBody = SetupAuthority.extend({
+  udid: z.string().min(1).max(255),
+  systemPort: z.number().int().min(1).max(65534),
+})
+export type SetupReserveBody = z.infer<typeof SetupReserveBody>
+export const SetupFinishBody = SetupAuthority.extend({
+  status: z.enum(['succeeded', 'failed', 'cancelled']),
+  reason: SetupReason.optional(),
+  stopped: z.boolean(),
+  version: RuntimeVersion.optional(),
+}).refine(
+  (v) => v.status !== 'succeeded' || (v.stopped && !!v.version),
+  'successful setup requires confirmed commands and observed OS version',
+)
+export type SetupFinishBody = z.infer<typeof SetupFinishBody>
+export const SetupResolveBody = z.object({ confirmedStopped: z.literal(true) })
+export const SetupHost = z.object({
+  name: SetupHostName,
+  os: z.enum(['darwin', 'linux']),
+  online: z.boolean(),
+  inventoryFresh: z.boolean(),
+  lastSeenAt: z.coerce.date(),
+  inventoryAt: z.coerce.date().nullable(),
+  issues: z.array(SetupReason).max(8),
+})
+export const SetupHostsQuery = z.object({ after: SetupHostName.optional() })
+export const SetupHostsPage = z.object({
+  hosts: z.array(SetupHost).max(25),
+  next: SetupHostName.nullable(),
+})
+export const SetupTargetsQuery = z.object({
+  host: SetupHostName,
+  after: VirtualTarget.shape.key.optional(),
+})
+export const SetupTargetsPage = z.object({
+  host: SetupHost,
+  blocking: SetupJob.nullable(),
+  targets: z
+    .array(
+      z.object({
+        target: VirtualTarget,
+        registered: z.object({ name: z.string(), enabled: z.boolean() }).nullable(),
+        conflict: z.string().nullable(),
+        job: SetupJob.nullable(),
+      }),
+    )
+    .max(50),
+  next: VirtualTarget.shape.key.nullable(),
+})
+export type SetupTargetsPage = z.infer<typeof SetupTargetsPage>

@@ -12,6 +12,11 @@ import type {
   ReleasePolicy,
   ResolvedInputs,
   RunInputIntent,
+  SetupReason,
+  SetupStage,
+  SetupState,
+  VirtualInventory,
+  VirtualTarget,
 } from '@nowait/shared'
 import { sql } from 'drizzle-orm'
 import {
@@ -29,21 +34,29 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-export const devices = pgTable('devices', {
-  name: text().primaryKey(),
-  platform: text({ enum: ['android', 'ios'] }).notNull(),
-  udid: text().notNull().unique(),
-  appiumUrl: text().notNull(),
-  systemPort: integer().notNull(),
-  host: text().notNull(),
-  enabled: boolean().notNull().default(true),
-  platformVersion: text(),
-  lastSeenAt: timestamp({ withTimezone: true }),
-  pausedUntil: timestamp({ withTimezone: true }),
-  pauseReason: text(),
-  // Attempts leased before this time cannot count toward a new pause after recovery.
-  healthSince: timestamp({ withTimezone: true }).notNull().defaultNow(),
-})
+export const devices = pgTable(
+  'devices',
+  {
+    name: text().primaryKey(),
+    platform: text({ enum: ['android', 'ios'] }).notNull(),
+    udid: text().notNull(),
+    virtualKey: text(),
+    appiumUrl: text().notNull(),
+    systemPort: integer().notNull(),
+    host: text().notNull(),
+    enabled: boolean().notNull().default(true),
+    platformVersion: text(),
+    lastSeenAt: timestamp({ withTimezone: true }),
+    pausedUntil: timestamp({ withTimezone: true }),
+    pauseReason: text(),
+    // Attempts leased before this time cannot count toward a new pause after recovery.
+    healthSince: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('devices_host_udid_idx').on(t.host, t.udid),
+    uniqueIndex('devices_virtual_target_idx').on(t.host, t.virtualKey),
+  ],
+)
 
 // Request identity persists with the launch, so a lost response can be retried safely.
 export const launches = pgTable('launches', {
@@ -225,5 +238,49 @@ export const fixtureResources = pgTable(
     index('fixture_open_idx').on(t.id).where(sql`status <> 'cleaned'`),
     index('fixture_pending_idx').on(t.nextAttemptAt, t.id).where(sql`status <> 'cleaned'`),
     index('fixture_retention_idx').on(t.updatedAt, t.id).where(sql`status = 'cleaned'`),
+  ],
+)
+
+export const runnerHosts = pgTable('runner_hosts', {
+  name: text().primaryKey(),
+  session: text().notNull(),
+  os: text().$type<'darwin' | 'linux'>().notNull(),
+  appiumUrl: text().notNull(),
+  lastSeenAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  inventoryAt: timestamp({ withTimezone: true }),
+  inventory: jsonb().$type<VirtualInventory>().notNull(),
+})
+export const setupJobs = pgTable(
+  'setup_jobs',
+  {
+    id: serial().primaryKey(),
+    host: text()
+      .notNull()
+      .references(() => runnerHosts.name),
+    session: text().notNull(),
+    targetKey: text().notNull(),
+    target: jsonb().$type<VirtualTarget>().notNull(),
+    boot: boolean().notNull(),
+    status: text().$type<SetupState>().notNull().default('queued'),
+    stage: text().$type<SetupStage>().notNull().default('queued'),
+    reason: text().$type<SetupReason>(),
+    claim: text(),
+    claimUntil: timestamp({ withTimezone: true }),
+    startedAt: timestamp({ withTimezone: true }),
+    cancelRequested: boolean().notNull().default(false),
+    deviceName: text().references(() => devices.name),
+    reservedUdid: text(),
+    reservedPort: integer(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('setup_target_open_idx')
+      .on(t.host, t.targetKey)
+      .where(sql`status IN ('queued','active','interrupted')`),
+    index('setup_host_work_idx').on(t.host, t.status, t.id),
+    index('setup_retention_idx')
+      .on(t.updatedAt, t.id)
+      .where(sql`status IN ('succeeded','failed','cancelled')`),
   ],
 )

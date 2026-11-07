@@ -345,6 +345,7 @@ async function openSession(device: Device, lease: Lease, gate: AppiumGate): Prom
         ? {
             platformName: 'iOS',
             'appium:automationName': 'XCUITest',
+            'appium:isHeadless': true,
             'appium:wdaLocalPort': device.systemPort,
             'appium:wdaLaunchTimeout': 180_000,
             'appium:wdaStartupRetries': 1,

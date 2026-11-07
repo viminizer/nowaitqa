@@ -19,6 +19,8 @@ import {
   type ResultBody,
   RevisionPage,
   RunSummary,
+  SetupClaim,
+  SetupContactReply,
 } from '@nowait/shared'
 import { z } from 'zod'
 import { config } from './config.ts'
@@ -274,4 +276,38 @@ export async function claimFixture(device: Device, signal: AbortSignal) {
 export async function finishFixture(body: FixtureFinishBody) {
   const res = await call('POST', '/fixtures/finish', [204, 409], body, 10_000)
   return res.status === 204
+}
+
+// Guided setup is optional when talking to a server from before this API existed.
+export async function setupContact(
+  body: import('@nowait/shared').SetupContactBody,
+  signal: AbortSignal,
+) {
+  const res = await call('POST', '/virtual/contact', [200, 404, 409], body, 10_000, signal)
+  if (res.status !== 200) return res.status
+  return SetupContactReply.parse(await res.json())
+}
+export async function setupClaim(body: import('@nowait/shared').SetupOwner, signal: AbortSignal) {
+  const res = await call('POST', '/virtual/claim', [200, 204], body, 10_000, signal)
+  return res.status === 204 ? null : SetupClaim.parse(await res.json())
+}
+export async function setupProgress(
+  body: import('@nowait/shared').SetupProgressBody,
+  signal: AbortSignal,
+) {
+  const res = await call('POST', '/virtual/progress', [204, 409], body, 10_000, signal)
+  return res.status === 204
+}
+export async function setupReserve(
+  body: import('@nowait/shared').SetupReserveBody,
+  signal: AbortSignal,
+) {
+  const res = await call('POST', '/virtual/reserve', [204, 400, 409], body, 10_000, signal)
+  return res.status === 204
+}
+export async function setupFinish(body: import('@nowait/shared').SetupFinishBody) {
+  await call('POST', '/virtual/finish', [204], body, 10_000)
+}
+export async function setupRelease(body: import('@nowait/shared').SetupOwner) {
+  await call('POST', '/virtual/release', [204], body, 10_000)
 }

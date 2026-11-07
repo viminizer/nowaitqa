@@ -44,7 +44,7 @@ export function App() {
           ) : path === '/fixtures' ? (
             <FixturesPage after={params.get('after')} queueId={params.get('queueId')} />
           ) : path === '/devices' ? (
-            <DevicesPage />
+            <DevicesPage params={params} />
           ) : (
             <RunsPage params={params} />
           )}
