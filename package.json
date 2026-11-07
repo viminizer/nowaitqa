@@ -1,6 +1,6 @@
 {
   "name": "nowait-qa",
-  "version": "0.0.45",
+  "version": "0.0.46",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
@@ -9,12 +9,15 @@
   },
   "scripts": {
     "typecheck": "tsc && tsc -p web",
-    "lint": "biome check ."
+    "lint": "biome check . --error-on-warnings && pnpm check:ui",
+    "check:ui": "tsx scripts/check-web.ts",
+    "check:ui:selftest": "tsx scripts/check-web-selftest.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.4",
     "@types/node": "^26.6.6",
+    "postcss": "^8.5.32",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "7.0.2"
   }
 }

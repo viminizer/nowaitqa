@@ -1,0 +1,35 @@
+/* Action buttons (ui.tsx Action) */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space);
+}
+.action {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space);
+  margin-left: var(--space);
+}
+.actions .action {
+  margin-left: 0;
+}
+.button {
+  font: inherit;
+  color: var(--accent);
+  background: var(--surface);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(var(--space) / 2) var(--space);
+  cursor: pointer;
+}
+.button:disabled {
+  color: var(--muted);
+  cursor: wait;
+}
+.button:focus-visible,
+.input:focus-visible,
+.select-trigger:focus-visible {
+  outline: var(--focus-width) solid var(--accent);
+  outline-offset: var(--focus-width);
+}

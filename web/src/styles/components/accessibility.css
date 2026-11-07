@@ -1,0 +1,9 @@
+/* Text for screen readers only */
+.sr-only {
+  position: absolute;
+  width: var(--sr-size);
+  height: var(--sr-size);
+  overflow: hidden;
+  clip-path: inset(var(--sr-clip-inset));
+  white-space: nowrap;
+}

@@ -15,7 +15,8 @@
     "server/drizzle.config.ts",
     "runner/src",
     "sdk",
-    "examples/scenarios"
+    "examples/scenarios",
+    "scripts"
   ],
   "exclude": ["**/node_modules"]
 }

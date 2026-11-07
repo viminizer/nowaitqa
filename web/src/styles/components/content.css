@@ -1,0 +1,79 @@
+.muted {
+  color: var(--muted);
+}
+.error {
+  overflow-wrap: anywhere;
+  color: var(--failed);
+}
+
+/* Tables scroll sideways on a phone instead of breaking the page. */
+.scroll {
+  position: relative;
+  overflow-x: auto;
+  background: var(--surface);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.device-state,
+.attempt-detail {
+  min-width: calc(var(--space) * 28);
+  overflow-wrap: anywhere;
+}
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space) calc(var(--space) * 1.5);
+  border-bottom: var(--border-width) solid var(--line);
+}
+th {
+  font-size: var(--font-small-size);
+  font-weight: var(--weight-semibold);
+  color: var(--muted);
+  white-space: nowrap;
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+.error-text {
+  font-family: var(--mono);
+  font-size: var(--font-small-size);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: var(--error-line-width);
+}
+.error-text summary {
+  cursor: pointer;
+}
+.files {
+  white-space: nowrap;
+}
+.files img {
+  display: block;
+  height: var(--thumbnail-height);
+  margin-bottom: calc(var(--space) / 2);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+}
+.pager {
+  display: flex;
+  gap: calc(var(--space) * 2);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: calc(var(--space) / 2) calc(var(--space) * 2);
+  margin: 0;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere; /* long commits and build paths wrap on a phone */
+}

@@ -1,5 +1,6 @@
 import type { RunDetail } from '@nowait/shared'
-import { duration } from './ui.tsx'
+import { duration } from '../../ui/index.ts'
+import { TimelineBlock } from '../../ui/TimelineBlock.tsx'
 
 // One lane per phone, one block per attempt, from lease to result. The gaps are idle time: with the
 // shared queue they stay small. A very big run shows its first blocks only (timelineCut), and the
@@ -11,7 +12,7 @@ export function Timeline({ run }: { run: RunDetail }) {
     ? Math.max(...run.timeline.map((a) => (a.finishedAt ?? run.now).getTime()))
     : runEnd
   const total = Math.max(end - start, 1)
-  const percent = (ms: number) => `${(ms / total) * 100}%`
+  const percent = (ms: number) => (ms / total) * 100
   const phones = [
     ...new Set([
       ...run.devices.map((d) => d.name), // every phone that finished work, even past the cut
@@ -43,13 +44,12 @@ export function Timeline({ run }: { run: RunDetail }) {
                 const to = a.finishedAt?.getTime() ?? end
                 const label = `${a.scenarioId}${a.profile ? ` [${a.profile.name}]` : ''}, attempt ${a.attempt}: ${a.status}, ${duration(to - from)}`
                 return (
-                  <div
+                  <TimelineBlock
                     key={a.queueId}
-                    className={`block status-${a.status}`}
-                    style={{ left: percent(from - start), width: percent(to - from) }}
-                    title={label}
-                    role="img"
-                    aria-label={label}
+                    left={percent(from - start)}
+                    width={percent(to - from)}
+                    status={a.status}
+                    label={label}
                   />
                 )
               })}

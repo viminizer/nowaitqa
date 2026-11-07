@@ -8,9 +8,19 @@ import {
   releaseReasonText,
   stageText,
 } from '@nowait/shared'
-import { useApi } from './api.ts'
+import { useApi } from '../../lib/api.ts'
+import {
+  Action,
+  Counts,
+  duration,
+  Loaded,
+  openRun,
+  Page,
+  Status,
+  Table,
+  time,
+} from '../../ui/index.ts'
 import { Timeline } from './Timeline.tsx'
-import { Action, Counts, duration, Loaded, openRun, Status, time } from './ui.tsx'
 
 // A finished run does not change any more.
 const isRunning = (run: RunDetail) => run.status === 'running'
@@ -59,151 +69,148 @@ function Attempts({
           </p>
         ) : (
           <>
-            <div className="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Scenario</th>
-                    <th>Status</th>
-                    <th>Phone</th>
-                    <th>Duration</th>
-                    <th>Execution</th>
-                    <th>Recovery</th>
-                    <th>Error</th>
-                    <th>Files</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {attempts.map((a) => (
-                    <tr key={a.queueId}>
-                      <td>
-                        {platform ? (
-                          <a
-                            href={`#/history?scenarioId=${encodeURIComponent(a.scenarioId)}&platform=${platform}`}
-                          >
-                            {a.scenarioId}
-                          </a>
-                        ) : (
-                          a.scenarioId
-                        )}
-                        {a.profile && (
-                          <p className="muted">
-                            {a.profile.name} · {a.profile.deviceClass} {a.profile.platformVersion}
-                          </p>
-                        )}
-                        <p className="muted">
-                          #{a.queueId} · attempt {a.attempt}
-                          {a.scenarioAttempt !== null && <> · test attempt {a.scenarioAttempt}</>}
-                        </p>
-                      </td>
-                      <td>
-                        <Status status={a.status} />
-                        {/* a running run retries on its own */}
-                        {a.status === 'failed' && runStatus !== 'running' && (
-                          <Action
-                            label="Run again"
-                            path={`/attempts/${a.queueId}/again`}
-                            onDone={openRun}
-                          />
-                        )}
-                      </td>
-                      <td>{a.device ?? '-'}</td>
-                      <td>{duration(a.durationMs)}</td>
-                      <td className="attempt-detail">
-                        <p>
-                          {a.status === 'pending'
-                            ? 'Waiting for resources'
-                            : a.progress
-                              ? stageText(a.progress.stage)
-                              : 'Progress unavailable'}
-                        </p>
-                        {originText(a)}
-                        {a.progress && (
-                          <details>
-                            <summary>Phase and command history</summary>
-                            <p className="muted">
-                              Last update {time(a.progress.updatedAt)}. The last reported phase may
-                              be stale after an interruption.
-                            </p>
-                            {a.progress.events.map((e) => (
-                              <p key={e.id}>
-                                {time(e.at)} · {stageText(e.stage)}
-                              </p>
-                            ))}
-                            {a.progress.commands.length === 0 ? (
-                              <p>No command timings available.</p>
-                            ) : (
-                              a.progress.commands.map((c) => (
-                                <p key={c.id}>
-                                  {time(c.startedAt)} · {c.command.replaceAll('_', ' ')} ·{' '}
-                                  {c.status}
-                                  {c.status !== 'running' && <> · {duration(c.durationMs)}</>}
-                                </p>
-                              ))
-                            )}
-                            <p className="muted">
-                              Older entries omitted: {a.progress.droppedEvents} phases,{' '}
-                              {a.progress.droppedCommands} commands.
-                            </p>
-                          </details>
-                        )}
-                        <p className="muted">
-                          {a.inputsVerified ? 'Inputs verified' : 'Inputs unavailable'}
-                        </p>
-                        {a.inputRuntime && (
-                          <details>
-                            <summary>Runtime</summary>
-                            <p>
-                              Node {a.inputRuntime.node} · runner {a.inputRuntime.runner} ·
-                              WebdriverIO {a.inputRuntime.webdriver}
-                            </p>
-                            <p>
-                              Appium {a.inputRuntime.appium ?? 'unknown'};{' '}
-                              {a.inputRuntime.automation ?? 'automation unknown'}; driver{' '}
-                              {a.inputRuntime.driver ?? 'unknown'}; OS{' '}
-                              {a.inputRuntime.platformVersion ?? 'unknown'}
-                            </p>
-                          </details>
-                        )}
-                      </td>
-                      <td className="attempt-detail">
-                        {a.recoveryAction === 'none' ? '-' : a.recoveryAction.replaceAll('_', ' ')}
-                        {a.recoveryNote && <p>{a.recoveryNote}</p>}
-                        {a.retryQueueId !== null && <p>Next attempt #{a.retryQueueId}</p>}
-                      </td>
-                      <td className="error-text attempt-detail">
-                        {a.error && <ErrorText error={a.error} />}
-                      </td>
-                      <td className="files">
-                        {a.fixtureCleanup !== 'none' && (
-                          <p>
-                            <a href={`#/fixtures?queueId=${a.queueId}`}>Fixtures</a>{' '}
-                            <Status status={a.fixtureCleanup} />
-                          </p>
-                        )}
-                        <a href={file(a, 'diagnostics')}>
-                          Download diagnostics{!a.diagnostics && ' (available metadata)'}
+            <Table>
+              <thead>
+                <tr>
+                  <th>Scenario</th>
+                  <th>Status</th>
+                  <th>Phone</th>
+                  <th>Duration</th>
+                  <th>Execution</th>
+                  <th>Recovery</th>
+                  <th>Error</th>
+                  <th>Files</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attempts.map((a) => (
+                  <tr key={a.queueId}>
+                    <td>
+                      {platform ? (
+                        <a
+                          href={`#/history?scenarioId=${encodeURIComponent(a.scenarioId)}&platform=${platform}`}
+                        >
+                          {a.scenarioId}
                         </a>
-                        {a.screenshot && (
-                          <a href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
-                            <img
-                              src={file(a, 'screenshot')}
-                              alt={`Screenshot of ${a.scenarioId}`}
-                              loading="lazy"
-                            />
-                          </a>
-                        )}
-                        {a.log && (
-                          <a href={file(a, 'log')} target="_blank" rel="noreferrer">
-                            Log
-                          </a>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      ) : (
+                        a.scenarioId
+                      )}
+                      {a.profile && (
+                        <p className="muted">
+                          {a.profile.name} · {a.profile.deviceClass} {a.profile.platformVersion}
+                        </p>
+                      )}
+                      <p className="muted">
+                        #{a.queueId} · attempt {a.attempt}
+                        {a.scenarioAttempt !== null && <> · test attempt {a.scenarioAttempt}</>}
+                      </p>
+                    </td>
+                    <td>
+                      <Status status={a.status} />
+                      {/* a running run retries on its own */}
+                      {a.status === 'failed' && runStatus !== 'running' && (
+                        <Action
+                          label="Run again"
+                          path={`/attempts/${a.queueId}/again`}
+                          onDone={openRun}
+                        />
+                      )}
+                    </td>
+                    <td>{a.device ?? '-'}</td>
+                    <td>{duration(a.durationMs)}</td>
+                    <td className="attempt-detail">
+                      <p>
+                        {a.status === 'pending'
+                          ? 'Waiting for resources'
+                          : a.progress
+                            ? stageText(a.progress.stage)
+                            : 'Progress unavailable'}
+                      </p>
+                      {originText(a)}
+                      {a.progress && (
+                        <details>
+                          <summary>Phase and command history</summary>
+                          <p className="muted">
+                            Last update {time(a.progress.updatedAt)}. The last reported phase may be
+                            stale after an interruption.
+                          </p>
+                          {a.progress.events.map((e) => (
+                            <p key={e.id}>
+                              {time(e.at)} · {stageText(e.stage)}
+                            </p>
+                          ))}
+                          {a.progress.commands.length === 0 ? (
+                            <p>No command timings available.</p>
+                          ) : (
+                            a.progress.commands.map((c) => (
+                              <p key={c.id}>
+                                {time(c.startedAt)} · {c.command.replaceAll('_', ' ')} · {c.status}
+                                {c.status !== 'running' && <> · {duration(c.durationMs)}</>}
+                              </p>
+                            ))
+                          )}
+                          <p className="muted">
+                            Older entries omitted: {a.progress.droppedEvents} phases,{' '}
+                            {a.progress.droppedCommands} commands.
+                          </p>
+                        </details>
+                      )}
+                      <p className="muted">
+                        {a.inputsVerified ? 'Inputs verified' : 'Inputs unavailable'}
+                      </p>
+                      {a.inputRuntime && (
+                        <details>
+                          <summary>Runtime</summary>
+                          <p>
+                            Node {a.inputRuntime.node} · runner {a.inputRuntime.runner} ·
+                            WebdriverIO {a.inputRuntime.webdriver}
+                          </p>
+                          <p>
+                            Appium {a.inputRuntime.appium ?? 'unknown'};{' '}
+                            {a.inputRuntime.automation ?? 'automation unknown'}; driver{' '}
+                            {a.inputRuntime.driver ?? 'unknown'}; OS{' '}
+                            {a.inputRuntime.platformVersion ?? 'unknown'}
+                          </p>
+                        </details>
+                      )}
+                    </td>
+                    <td className="attempt-detail">
+                      {a.recoveryAction === 'none' ? '-' : a.recoveryAction.replaceAll('_', ' ')}
+                      {a.recoveryNote && <p>{a.recoveryNote}</p>}
+                      {a.retryQueueId !== null && <p>Next attempt #{a.retryQueueId}</p>}
+                    </td>
+                    <td className="error-text attempt-detail">
+                      {a.error && <ErrorText error={a.error} />}
+                    </td>
+                    <td className="files">
+                      {a.fixtureCleanup !== 'none' && (
+                        <p>
+                          <a href={`#/fixtures?queueId=${a.queueId}`}>Fixtures</a>{' '}
+                          <Status status={a.fixtureCleanup} />
+                        </p>
+                      )}
+                      <a href={file(a, 'diagnostics')}>
+                        Download diagnostics{!a.diagnostics && ' (available metadata)'}
+                      </a>
+                      {a.screenshot && (
+                        <a href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
+                          <img
+                            src={file(a, 'screenshot')}
+                            alt={`Screenshot of ${a.scenarioId}`}
+                            loading="lazy"
+                          />
+                        </a>
+                      )}
+                      {a.log && (
+                        <a href={file(a, 'log')} target="_blank" rel="noreferrer">
+                          Log
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
             <p className="pager">
               {page > 0 && <a href={`#/runs/${runId}?page=${page - 1}`}>Previous attempts</a>}
               {next !== null && <a href={`#/runs/${runId}?page=${next}`}>Next attempts</a>}
@@ -219,11 +226,15 @@ export function RunPage({ id, page }: { id: number; page: number }) {
   const state = useApi(`/runs/${id}`, RunDetail, isRunning)
   // the attempts load next to the summary, not after it
   return (
-    <>
+    <Page
+      title={
+        <>
+          Run #{id} {state.data && <Status status={state.data.status} />}
+        </>
+      }
+    >
       {/* the title shows while loading, like the other pages' */}
-      <h1>
-        Run #{id} {state.data && <Status status={state.data.status} />}
-      </h1>
+
       <Loaded state={state}>
         {(run) => (
           <>
@@ -374,38 +385,36 @@ export function RunPage({ id, page }: { id: number; page: number }) {
             {run.coverage.length > 0 && (
               <>
                 <h2>Required coverage</h2>
-                <div className="scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Profile</th>
-                        <th>Results</th>
-                        <th>Devices</th>
+                <Table>
+                  <thead>
+                    <tr>
+                      <th>Profile</th>
+                      <th>Results</th>
+                      <th>Devices</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {run.coverage.map((c) => (
+                      <tr key={c.profile.name}>
+                        <td>
+                          {c.profile.name}
+                          <p className="muted">
+                            {c.profile.deviceClass} {c.profile.platformVersion}
+                          </p>
+                        </td>
+                        <td>
+                          <Counts counts={c.counts} />
+                        </td>
+                        <td>
+                          {c.availability === 'available'
+                            ? 'Matching registration available'
+                            : 'No enabled matching device'}
+                          <p className="muted">Runtime is verified before execution.</p>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {run.coverage.map((c) => (
-                        <tr key={c.profile.name}>
-                          <td>
-                            {c.profile.name}
-                            <p className="muted">
-                              {c.profile.deviceClass} {c.profile.platformVersion}
-                            </p>
-                          </td>
-                          <td>
-                            <Counts counts={c.counts} />
-                          </td>
-                          <td>
-                            {c.availability === 'available'
-                              ? 'Matching registration available'
-                              : 'No enabled matching device'}
-                            <p className="muted">Runtime is verified before execution.</p>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </Table>
               </>
             )}
             <h2>Phones</h2>
@@ -415,6 +424,6 @@ export function RunPage({ id, page }: { id: number; page: number }) {
       </Loaded>
       <h2>Attempts</h2>
       <Attempts runId={id} page={page} platform={state.data?.platform} />
-    </>
+    </Page>
   )
 }

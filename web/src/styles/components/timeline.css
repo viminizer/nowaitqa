@@ -1,0 +1,43 @@
+.timeline {
+  padding: calc(var(--space) * 1.5);
+  background: var(--surface);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+}
+.lane {
+  display: grid;
+  grid-template-columns: minmax(var(--lane-min-width), var(--lane-max-width)) 1fr;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  margin-bottom: var(--space);
+}
+.lane-name {
+  overflow-wrap: anywhere;
+}
+.lane-bar {
+  position: relative;
+  height: var(--lane-height);
+  background: var(--bg);
+  border-radius: var(--radius);
+}
+.block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: var(--timeline-block-min-width);
+  background: var(--c);
+  border-right: var(--border-width) solid var(--surface);
+  border-radius: var(--radius-small);
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: var(--font-small-size);
+}
+@media (max-width: 600px) {
+  .lane {
+    grid-template-columns: 1fr;
+    gap: calc(var(--space) / 2);
+  }
+}
