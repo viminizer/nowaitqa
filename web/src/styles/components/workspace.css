@@ -217,7 +217,11 @@
   border-bottom: var(--border-width) solid var(--line);
   font-size: var(--compact-meta-size);
 }
+.panel-heading > div:first-child {
+  min-width: 0;
+}
 .panel-heading h2 {
+  overflow-wrap: anywhere;
   font-size: var(--compact-section-size);
   margin: 0;
 }

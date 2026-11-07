@@ -1,4 +1,12 @@
 const statusStyle: Record<string, string> = {
+  queued: 'pending',
+  cancelled: 'disabled',
+  active: 'leased',
+  succeeded: 'passed',
+  interrupted: 'failed',
+  starting: 'leased',
+  stopped: 'disabled',
+  unavailable: 'failed',
   cleaned: 'passed',
   quarantined: 'failed',
   cleaning: 'leased',

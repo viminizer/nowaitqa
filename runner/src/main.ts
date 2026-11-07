@@ -6,6 +6,7 @@ import { getDevices } from './api.ts'
 import { startScenarios } from './catalog.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
+import { startVirtualSetup } from './virtual-setup.ts'
 import { runWorker } from './worker.ts'
 
 const running = new Set<string>()
@@ -24,6 +25,7 @@ async function startNewWorkers(signal: AbortSignal) {
 }
 
 log(config.HOST, `runner starting, server ${config.SERVER_URL}`)
+startVirtualSetup(shutdown.signal)
 await startScenarios(shutdown.signal)
 const stopDiscovery = every(60_000, 'device discovery', startNewWorkers, {
   error: (err, message) => log(config.HOST, message, err),

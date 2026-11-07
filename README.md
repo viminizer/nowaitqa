@@ -7,6 +7,13 @@ with one phone on a long test while the others wait.
 
 Status: in development.
 
+## Inspiration
+
+Nowait QA was inspired by the MUSINSA Automation QE team's article
+[빠른 기기가 왜 기다려야 하지?](https://techblog.musinsa.com/빠른-기기가-왜-기다려야-하지-a0533ee53dd2)
+(“Why should fast devices wait?”) by 정다정, about their test automation Framework 3.0.
+Its shared scenario queue and centralized device management inspired this project's core design.
+
 ## Local setup
 
 ```bash
@@ -87,8 +94,63 @@ logs a warning and works as before. `adb_shell` lets anyone who can reach Appium
 commands on the phones: keep Appium reachable only from the runner (it listens on all addresses
 unless you pass `--address 127.0.0.1`).
 
-Add each phone once with `PUT /devices` (`host` must match the runner's `HOST`). The runner picks
-up new phones within a minute.
+For installed virtual devices, use **Phones → Set up a virtual device** below. Physical Android
+phones and custom connections can use **Manual device registration** or `PUT /devices` (`host`
+must match the runner's `HOST`). New registrations are picked up within a minute.
+
+### Guided virtual-device setup
+
+Start the runner and local Appium on the device machine. Give each runner process a unique
+`HOST`; its machine appears on **Phones** even before the first device is registered. Choose
+that machine and an installed Android AVD or iOS Simulator by name and runtime. Click
+**Register** for a running device or **Start and register** for a stopped one. A single virtual
+device works with the ordinary queue; profiles and a second phone are not required.
+
+Discovery never boots devices. An explicit start boots Android headlessly (`-no-window`) or
+uses `simctl` without opening Simulator.app. Setup checks Appium and the installed UiAutomator2
+or XCUITest driver, waits for boot completion, verifies the selected identity and observed OS
+version, reserves ports, and creates a normal registration. **Registered** means setup passed
+those checks, not that an app scenario has passed. Start a normal sample run to verify execution.
+
+Prerequisites and runner settings:
+
+- Install the Android SDK tools and an AVD/system image, or Xcode and an iOS Simulator runtime
+  on a Mac. Nowait does not install tools, create images, or support physical iPhones.
+- `APPIUM_URL` defaults to `http://127.0.0.1:4723`. Guided setup requires a loopback URL on the
+  runner's machine and an already running Appium server; include its base path if configured.
+  The `appium` executable must describe that server's installed drivers.
+- `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) supplies SDK paths. Otherwise `adb` and `emulator`
+  must be on PATH. Override with `ADB_BIN`, `EMULATOR_BIN`, `APPIUM_BIN` or `XCRUN_BIN` when
+  needed. `ANDROID_AVD_HOME` defaults to `~/.android/avd` for stopped AVD runtime labels;
+  actual Android versions are observed after boot.
+
+Inventory refreshes about every minute and supports up to 100 targets per machine. Missing tools,
+runtimes, stale inventory and setup failures appear on Phones. An unknown/offline Android
+emulator connection blocks unsafe identity guesses. Fix its ADB connection before retrying.
+Automatic registration chooses available UiAutomator2 ports from 8200–8299 or WDA/MJPEG pairs
+from 8100–8199, and Android console/ADB pairs from 5554–5683. Existing registrations and OS
+listeners are checked; server reservations also protect against simultaneous manual additions.
+Manually configured Appium URLs, ports, versions and disabled devices are preserved. Conflicting
+settings require manual review rather than being overwritten. A serial reused by another AVD
+is an identity conflict: stop the affected devices and reconcile their actual IDs with
+`PUT /devices` before retrying; a registration associated with another target is never adopted.
+
+Only one setup is open per machine. Progress and cancellation are visible on Phones. Setup has
+a seven-minute runner deadline; loss of contact stops owned setup commands before its 60-second
+server claim expires. Cancellation or failure **does not shut down an already running or
+explicitly started virtual device**. Refresh discovery before retrying. If command termination
+or runner ownership is unknown, the server retains an interrupted reservation and never replays
+the boot automatically. Stop the old setup runner and confirm its commands ended, then use
+**Confirm previous setup stopped**, restart the runner and wait for fresh discovery. This is
+separate from scenario/fixture cleanup recovery. Active leases and cleanup holds block setup
+for their device; other registered devices continue normal work.
+
+Upgrade the server before runners. Older servers leave manual device execution available but
+cannot provide guided setup. Setup history is retained for `ARTIFACT_DAYS`; interrupted holds
+remain until explicitly resolved. Real headless Android and iOS Simulator cold boot, automatic
+registration and normal sample execution have been verified with public sample apps. Android
+required one retry after an initial automation-driver startup timeout; iOS passed all four
+sample scenarios. Controlled checks additionally cover cancellation, ownership and failure recovery.
 
 The server gives each registered device at most one leased scenario attempt at a time, even
 when duplicate runner processes request work for it. Extra requests wait through the usual
@@ -241,7 +303,8 @@ xcrun simctl list devices available
 appium --address 127.0.0.1 --port 4723
 ```
 
-Register the simulator with `PUT /devices`, using its UUID from `simctl`:
+Use the guided Phones flow to select and boot it without copying a UUID. For manual setup,
+register the simulator with `PUT /devices`, using its UUID from `simctl`:
 Boot it and wait for readiness with `xcrun simctl bootstatus <uuid> -b` before starting a run;
 the first boot of a new simulator may need several minutes to migrate its data.
 
@@ -398,7 +461,9 @@ Build it before you start the server: the server looks for it at startup. It the
 (any) and `DASHBOARD_PASSWORD`. It refreshes every 5 seconds (a finished run's page stops).
 
 It can also:
-- **Add a device.** On Phones, enter its name, platform, UDID, Appium URL, machine (the runner's
+- **Add a device.** On Phones, choose a runner machine and an installed virtual device, then
+  register it or explicitly start and register it. For manual registration, enter its name, platform,
+  UDID, Appium URL, machine (the runner's
   `HOST`) and system/WDA port. Start Appium and the runner on that machine; the runner picks up
   the registration within a minute. The form adds only: an existing name or UDID is an error,
   and its settings stay unchanged. Use `PUT /devices` to update an existing registration.
@@ -809,3 +874,10 @@ Basic auth and the existing action header for POST. Existing single-platform `/r
 Migration0021 adds the launch request table, nullable run grouping key and unique(platform,launch)
 index. Legacy runs remain ungrouped. Request identities follow the same retained-history lifecycle
 as runs; artifacts keep their existing retention policy. No runner or mobile-driver changes needed.
+
+Guided virtual setup uses the same compact Phones views as registered devices. Choose **Set up
+virtual device**, select a runner machine and an installed device, then explicitly start/register
+it. Setup progress and recovery have their own URL views; table data scrolls on desktop and
+mobile pages flow naturally. iOS Simulator test sessions also set Appium `isHeadless: true`, so
+ordinary execution keeps Simulator.app closed after setup. See the
+[Appium Simulator capabilities](https://appium.github.io/appium-xcuitest-driver/10.43/reference/capabilities/).
