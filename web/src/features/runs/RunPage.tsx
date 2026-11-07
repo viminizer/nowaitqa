@@ -9,17 +9,23 @@ import {
   stageText,
 } from '@nowait/shared'
 import { useApi } from '../../lib/api.ts'
+import { FilterTabs } from '../../ui/FilterTabs.tsx'
 import {
   Action,
   Counts,
+  DataPanel,
   duration,
+  EmptyState,
   Loaded,
   openRun,
   Page,
   Status,
+  Summary,
   Table,
+  TableFooter,
   time,
 } from '../../ui/index.ts'
+import { Link } from '../../ui/Link.tsx'
 import { Timeline } from './Timeline.tsx'
 
 // A finished run does not change any more.
@@ -58,15 +64,15 @@ function Attempts({
     <Loaded state={state}>
       {({ attempts, next, runStatus }) =>
         attempts.length === 0 ? (
-          <p className="muted">
-            {page > 0 ? (
-              <>
-                No more attempts. <a href={`#/runs/${runId}`}>First page</a>
-              </>
-            ) : (
-              'No attempts yet.'
-            )}
-          </p>
+          <EmptyState
+            title={page > 0 ? 'No more attempts' : 'No attempts yet'}
+            description={
+              page > 0
+                ? 'Return to the first attempt page to review this run.'
+                : 'Attempts will appear when scenarios enter the queue.'
+            }
+            action={page > 0 && <Link href={`#/runs/${runId}?view=attempts`}>First page</Link>}
+          />
         ) : (
           <>
             <Table>
@@ -87,11 +93,12 @@ function Attempts({
                   <tr key={a.queueId}>
                     <td>
                       {platform ? (
-                        <a
+                        <Link
+                          variant="inline"
                           href={`#/history?scenarioId=${encodeURIComponent(a.scenarioId)}&platform=${platform}`}
                         >
                           {a.scenarioId}
-                        </a>
+                        </Link>
                       ) : (
                         a.scenarioId
                       )}
@@ -185,36 +192,45 @@ function Attempts({
                     <td className="files">
                       {a.fixtureCleanup !== 'none' && (
                         <p>
-                          <a href={`#/fixtures?queueId=${a.queueId}`}>Fixtures</a>{' '}
+                          <Link href={`#/fixtures?queueId=${a.queueId}`}>Fixtures</Link>{' '}
                           <Status status={a.fixtureCleanup} />
                         </p>
                       )}
-                      <a href={file(a, 'diagnostics')}>
+                      <Link href={file(a, 'diagnostics')}>
                         Download diagnostics{!a.diagnostics && ' (available metadata)'}
-                      </a>
+                      </Link>
                       {a.screenshot && (
-                        <a href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
+                        <Link href={file(a, 'screenshot')} target="_blank" rel="noreferrer">
                           <img
                             src={file(a, 'screenshot')}
                             alt={`Screenshot of ${a.scenarioId}`}
                             loading="lazy"
                           />
-                        </a>
+                        </Link>
                       )}
                       {a.log && (
-                        <a href={file(a, 'log')} target="_blank" rel="noreferrer">
+                        <Link href={file(a, 'log')} target="_blank" rel="noreferrer">
                           Log
-                        </a>
+                        </Link>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </Table>
-            <p className="pager">
-              {page > 0 && <a href={`#/runs/${runId}?page=${page - 1}`}>Previous attempts</a>}
-              {next !== null && <a href={`#/runs/${runId}?page=${next}`}>Next attempts</a>}
-            </p>
+            <TableFooter label={`Attempt page ${page + 1}`}>
+              {page > 0 && (
+                <Link href={`#/runs/${runId}?view=attempts&page=${page - 1}`}>
+                  Previous attempts
+                </Link>
+              )}
+              {next !== null && (
+                <Link href={`#/runs/${runId}?view=attempts&page=${next}`}>Next attempts</Link>
+              )}
+              <Link href={`/dashboard/api/runs/${runId}/manifest?page=${page}`}>
+                Download inputs and attempt page {page + 1}
+              </Link>
+            </TableFooter>
           </>
         )
       }
@@ -222,9 +238,49 @@ function Attempts({
   )
 }
 
-export function RunPage({ id, page }: { id: number; page: number }) {
+function RunActions({ run }: { run: RunDetail }) {
+  const id = run.id
+  return (
+    <div className="actions">
+      {isRunning(run) ? (
+        <Action
+          label="Cancel run"
+          path={`/runs/${id}/cancel`}
+          ask={`Cancel run #${id}? Its open scenarios fail.`}
+        />
+      ) : (
+        <>
+          <Action
+            label="Run again"
+            path={`/runs/${id}/again`}
+            body={{ failedOnly: false }}
+            onDone={openRun}
+          />
+          {run.scenarios.some((s) => s.status === 'failed') && (
+            <Action
+              label="Run failed again"
+              path={`/runs/${id}/again`}
+              body={{ failedOnly: true }}
+              onDone={openRun}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+export function RunPage({
+  id,
+  page,
+  view = 'overview',
+}: {
+  id: number
+  page: number
+  view?: string
+}) {
   const state = useApi(`/runs/${id}`, RunDetail, isRunning)
-  // the attempts load next to the summary, not after it
+  const selected = ['attempts', 'coverage', 'timeline'].includes(view) ? view : 'overview'
   return (
     <Page
       title={
@@ -232,198 +288,278 @@ export function RunPage({ id, page }: { id: number; page: number }) {
           Run #{id} {state.data && <Status status={state.data.status} />}
         </>
       }
+      description="Inputs, execution and saved evidence."
+      actions={state.data && <RunActions run={state.data} />}
     >
-      {/* the title shows while loading, like the other pages' */}
-
-      <Loaded state={state}>
-        {(run) => (
+      {state.data && (
+        <Summary
+          label="Scenario outcome summary"
+          items={['passed', 'flaky', 'failed', 'pending'].map((status) => ({
+            label:
+              status === 'passed'
+                ? 'Passed'
+                : status === 'flaky'
+                  ? 'Flaky'
+                  : status === 'failed'
+                    ? 'Failed'
+                    : 'Pending',
+            value: state.data.scenarios.filter((s) => s.status === status).length,
+          }))}
+        />
+      )}
+      <DataPanel
+        title={
+          selected === 'attempts'
+            ? 'Scenario attempts'
+            : selected === 'coverage'
+              ? 'Required coverage'
+              : selected === 'timeline'
+                ? 'Execution timeline'
+                : 'Run overview'
+        }
+        toolbar={
+          <FilterTabs
+            label="Run detail views"
+            items={[
+              { label: 'Overview', href: `#/runs/${id}`, active: selected === 'overview' },
+              {
+                label: 'Attempts',
+                href: `#/runs/${id}?view=attempts`,
+                active: selected === 'attempts',
+              },
+              {
+                label: 'Coverage',
+                href: `#/runs/${id}?view=coverage`,
+                active: selected === 'coverage',
+              },
+              {
+                label: 'Timeline',
+                href: `#/runs/${id}?view=timeline`,
+                active: selected === 'timeline',
+              },
+            ]}
+          />
+        }
+        metadata={
+          state.data?.release && (
+            <>
+              Release gate <Status status={state.data.release.gate.status} />
+              <span>
+                {state.data.release.gate.policy}
+                {state.data.release.source === 'legacy' ? ' · derived' : ' · saved'}
+              </span>
+            </>
+          )
+        }
+      >
+        {selected === 'attempts' ? (
           <>
-            <p className="actions">
-              {isRunning(run) ? (
-                <Action
-                  label="Cancel run"
-                  path={`/runs/${id}/cancel`}
-                  ask={`Cancel run #${id}? Its open scenarios fail.`}
-                />
-              ) : (
-                <>
-                  <Action
-                    label="Run again"
-                    path={`/runs/${id}/again`}
-                    body={{ failedOnly: false }}
-                    onDone={openRun}
+            <Loaded state={state}>{() => null}</Loaded>
+            <Attempts runId={id} page={page} platform={state.data?.platform} />
+          </>
+        ) : (
+          <Loaded state={state}>
+            {(run) =>
+              selected === 'coverage' ? (
+                run.coverage.length === 0 ? (
+                  <EmptyState
+                    title="No required coverage profiles"
+                    description="This run uses the shared device queue without required coverage profiles."
                   />
-                  {run.scenarios.some((s) => s.status === 'failed') && (
-                    <Action
-                      label="Run failed again"
-                      path={`/runs/${id}/again`}
-                      body={{ failedOnly: true }}
-                      onDone={openRun}
-                    />
-                  )}
-                </>
-              )}
-            </p>
-            <dl className="facts">
-              <dt>Scenarios</dt>
-              <dd>
-                <Counts counts={countStatuses(run.scenarios.map((s) => s.status))} />
-              </dd>
-              <dt>Started</dt>
-              <dd>{time(run.createdAt)}</dd>
-              <dt>Duration</dt>
-              <dd>{duration(run.durationMs)}</dd>
-              <dt>Platform</dt>
-              <dd>{run.platform}</dd>
-              <dt>Commit</dt>
-              <dd>
-                <code>{run.commit}</code>
-              </dd>
-              <dt>Input manifest</dt>
-              <dd>
-                {!run.inputManifest.intent ? (
-                  'Unavailable for this legacy run'
-                ) : !run.inputManifest.resolved ? (
-                  <>
-                    <p>
-                      {run.status === 'running'
-                        ? 'Awaiting verified inputs'
-                        : 'Inputs were not verified'}
-                    </p>
-                    {run.inputManifest.expected && (
-                      <p>
-                        Expected replay app SHA256:{' '}
-                        <code>{run.inputManifest.expected.app.sha256}</code>
-                      </p>
-                    )}
-                  </>
                 ) : (
-                  <>
-                    <p>
-                      App SHA256: <code>{run.inputManifest.resolved.app.sha256}</code>
-                    </p>
-                    <p>
-                      Scenario tree: <code>{run.inputManifest.resolved.scenarios.tree}</code>
-                    </p>
-                    <p>
-                      Scenario folder:{' '}
-                      <code>
-                        {run.inputManifest.resolved.scenarios.directory ??
-                          'unavailable for older evidence'}
-                      </code>
-                    </p>
-                    <p>
-                      Dependency lock:{' '}
-                      <code>
-                        {run.inputManifest.resolved.scenarios.lockSha256 ?? 'no lockfile'}
-                      </code>
-                    </p>
-                    <p>
-                      Ignored code SHA256:{' '}
-                      <code>
-                        {run.inputManifest.resolved.scenarios.ignoredCodeSha256 ??
-                          'unavailable for older evidence'}
-                      </code>
-                    </p>
-                    <p>
-                      {run.inputManifest.resolved.config.sessionMode} sessions;{' '}
-                      {run.inputManifest.resolved.config.scenarioTimeoutSeconds}s scenario limit
-                    </p>
-                  </>
-                )}
-                <p>
-                  <a href={`/dashboard/api/runs/${id}/manifest?page=${page}`}>
-                    Download inputs and attempt page {page + 1}
-                  </a>
-                </p>
-              </dd>
-              <dt>Trigger</dt>
-              <dd>{run.trigger}</dd>
-              <dt>Split</dt>
-              <dd>{run.split}</dd>
-              <dt>Release gate</dt>
-              <dd>
-                {run.release ? (
-                  <>
-                    <Status status={run.release.gate.status} /> {run.release.gate.policy} policy
-                    <p>{releaseReasonText(run.release.gate.reason)}</p>
-                    {run.release.source === 'legacy' && (
-                      <p className="muted">Derived for a legacy run; no saved release decision.</p>
-                    )}
-                    {run.release.partialCoverage && (
-                      <p>Subset rerun: cannot certify full release coverage.</p>
-                    )}
-                    {run.release.rerunOf && (
-                      <p>
-                        Rerun of{' '}
-                        <a href={`#/runs/${run.release.rerunOf}`}>#{run.release.rerunOf}</a>.
-                        Original history is preserved.
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  'Release gate unavailable; upgrade the server.'
-                )}
-              </dd>
-              <dt>Retry policy</dt>
-              <dd>
-                {run.recovery ? (
-                  <>
-                    {run.recovery.maxAttempts} test attempts; up to{' '}
-                    {run.recovery.maxInfrastructureRecoveries} infrastructure recoveries per
-                    scenario, {run.recovery.infrastructureRecoveries}/
-                    {run.recovery.maxRunInfrastructureRecoveries} used across this run.
-                  </>
-                ) : (
-                  'Legacy total-attempt policy'
-                )}
-              </dd>
-              <dt>App build</dt>
-              <dd>{run.inputManifest.intent?.appSource ?? inputSource(run.appBuild)}</dd>
-            </dl>
-
-            {run.coverage.length > 0 && (
-              <>
-                <h2>Required coverage</h2>
-                <Table>
+                  <Table label="Required coverage">
+                    <thead>
+                      <tr>
+                        <th>Profile</th>
+                        <th>Results</th>
+                        <th>Devices</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {run.coverage.map((c) => (
+                        <tr key={c.profile.name}>
+                          <td>
+                            {c.profile.name}
+                            <p className="muted">
+                              {c.profile.deviceClass} {c.profile.platformVersion}
+                            </p>
+                          </td>
+                          <td>
+                            <Counts counts={c.counts} />
+                          </td>
+                          <td>
+                            {c.availability === 'available'
+                              ? 'Matching registration available'
+                              : 'No enabled matching device'}
+                            <p className="muted">Runtime is verified before execution.</p>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                )
+              ) : selected === 'timeline' ? (
+                <Timeline run={run} />
+              ) : (
+                <Table label="Run overview">
                   <thead>
                     <tr>
-                      <th>Profile</th>
-                      <th>Results</th>
-                      <th>Devices</th>
+                      <th>Detail</th>
+                      <th>Value</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {run.coverage.map((c) => (
-                      <tr key={c.profile.name}>
-                        <td>
-                          {c.profile.name}
-                          <p className="muted">
-                            {c.profile.deviceClass} {c.profile.platformVersion}
-                          </p>
-                        </td>
-                        <td>
-                          <Counts counts={c.counts} />
-                        </td>
-                        <td>
-                          {c.availability === 'available'
-                            ? 'Matching registration available'
-                            : 'No enabled matching device'}
-                          <p className="muted">Runtime is verified before execution.</p>
-                        </td>
-                      </tr>
-                    ))}
+                    <tr>
+                      <th scope="row">Scenarios</th>
+                      <td>
+                        <Counts counts={countStatuses(run.scenarios.map((s) => s.status))} />
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Started</th>
+                      <td>{time(run.createdAt)}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Duration</th>
+                      <td>{duration(run.durationMs)}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Platform</th>
+                      <td>{run.platform}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Commit</th>
+                      <td>
+                        <code>{run.commit}</code>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Input manifest</th>
+                      <td>
+                        {!run.inputManifest.intent ? (
+                          'Unavailable for this legacy run'
+                        ) : !run.inputManifest.resolved ? (
+                          <>
+                            <p>
+                              {run.status === 'running'
+                                ? 'Awaiting verified inputs'
+                                : 'Inputs were not verified'}
+                            </p>
+                            {run.inputManifest.expected && (
+                              <p>
+                                Expected replay app SHA256:{' '}
+                                <code>{run.inputManifest.expected.app.sha256}</code>
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <p>
+                              App SHA256: <code>{run.inputManifest.resolved.app.sha256}</code>
+                            </p>
+                            <p>
+                              Scenario tree:{' '}
+                              <code>{run.inputManifest.resolved.scenarios.tree}</code>
+                            </p>
+                            <p>
+                              Scenario folder:{' '}
+                              <code>
+                                {run.inputManifest.resolved.scenarios.directory ??
+                                  'unavailable for older evidence'}
+                              </code>
+                            </p>
+                            <p>
+                              Dependency lock:{' '}
+                              <code>
+                                {run.inputManifest.resolved.scenarios.lockSha256 ?? 'no lockfile'}
+                              </code>
+                            </p>
+                            <p>
+                              Ignored code SHA256:{' '}
+                              <code>
+                                {run.inputManifest.resolved.scenarios.ignoredCodeSha256 ??
+                                  'unavailable for older evidence'}
+                              </code>
+                            </p>
+                            <p>
+                              {run.inputManifest.resolved.config.sessionMode} sessions;{' '}
+                              {run.inputManifest.resolved.config.scenarioTimeoutSeconds}s scenario
+                              limit
+                            </p>
+                          </>
+                        )}
+                        <p>
+                          <Link href={`/dashboard/api/runs/${id}/manifest?page=${page}`}>
+                            Download inputs and attempt page {page + 1}
+                          </Link>
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Trigger</th>
+                      <td>{run.trigger}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Split</th>
+                      <td>{run.split}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Release gate</th>
+                      <td>
+                        {run.release ? (
+                          <>
+                            <Status status={run.release.gate.status} /> {run.release.gate.policy}{' '}
+                            policy
+                            <p>{releaseReasonText(run.release.gate.reason)}</p>
+                            {run.release.source === 'legacy' && (
+                              <p className="muted">
+                                Derived for a legacy run; no saved release decision.
+                              </p>
+                            )}
+                            {run.release.partialCoverage && (
+                              <p>Subset rerun: cannot certify full release coverage.</p>
+                            )}
+                            {run.release.rerunOf && (
+                              <p>
+                                Rerun of{' '}
+                                <Link variant="inline" href={`#/runs/${run.release.rerunOf}`}>
+                                  #{run.release.rerunOf}
+                                </Link>
+                                . Original history is preserved.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          'Release gate unavailable; upgrade the server.'
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Retry policy</th>
+                      <td>
+                        {run.recovery ? (
+                          <>
+                            {run.recovery.maxAttempts} test attempts; up to{' '}
+                            {run.recovery.maxInfrastructureRecoveries} infrastructure recoveries per
+                            scenario, {run.recovery.infrastructureRecoveries}/
+                            {run.recovery.maxRunInfrastructureRecoveries} used across this run.
+                          </>
+                        ) : (
+                          'Legacy total-attempt policy'
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th scope="row">App build</th>
+                      <td>{run.inputManifest.intent?.appSource ?? inputSource(run.appBuild)}</td>
+                    </tr>
                   </tbody>
                 </Table>
-              </>
-            )}
-            <h2>Phones</h2>
-            <Timeline run={run} />
-          </>
+              )
+            }
+          </Loaded>
         )}
-      </Loaded>
-      <h2>Attempts</h2>
-      <Attempts runId={id} page={page} platform={state.data?.platform} />
+      </DataPanel>
     </Page>
   )
 }

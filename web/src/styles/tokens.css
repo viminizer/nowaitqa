@@ -13,8 +13,6 @@
   --error-line-width: 40ch;
   --thumbnail-height: 64px;
   --radius-pill: 999px;
-  --lane-min-width: 8rem;
-  --lane-max-width: 14rem;
   --lane-height: 1.75rem;
   --popover-max-height: 20rem;
   --sr-clip-inset: 50%;
@@ -56,4 +54,89 @@
     --running: #60a5fa;
     --pending: #8e8e93;
   }
+}
+
+/* Compact workspace palette and dimensions. */
+:root {
+  --compact-bg: #f5f5f0;
+  --compact-paper: #fff;
+  --compact-ink: #202720;
+  --compact-muted: #66705f;
+  --compact-line: #e3e7dd;
+  --compact-nav: #202a23;
+  --compact-nav-text: #a8b6a8;
+  --compact-nav-active: #354532;
+  --compact-nav-hover: #2b372d;
+  --compact-nav-line: #435044;
+  --compact-nav-bright: #edf2e8;
+  --compact-acid: #d2f481;
+  --compact-green: #326d40;
+  --compact-green-bg: #eef5e9;
+  --compact-red: #a83e32;
+  --compact-amber: #906313;
+  --compact-blue: #426589;
+  --compact-table-head: #fafbf8;
+  --compact-row-hover: #fcfdf9;
+  --compact-overlay: #17201866;
+  --compact-shadow: 0 16px 60px #18221b14;
+  --compact-font: "Avenir Next", "Trebuchet MS", sans-serif;
+  --compact-body-size: 14px;
+  --compact-small-size: 11px;
+  --compact-meta-size: 10px;
+  --compact-table-size: 12px;
+  --compact-section-size: 13px;
+  --compact-stat-size: 18px;
+  --compact-brand-size: 25px;
+  --compact-mobile-brand: 21px;
+  --compact-sidebar-width: 224px;
+  --compact-sidebar-narrow: 190px;
+  --compact-content-width: 1600px;
+  --compact-topbar-height: 56px;
+  --compact-control-height: 31px;
+  --compact-icon-size: 18px;
+  --compact-icon-small: 14px;
+  --compact-icon-stroke: 1.6;
+  --compact-name-width: 13rem;
+  --compact-search-width: 220px;
+  --compact-radius: 7px;
+  --compact-letter-spacing: -0.8px;
+  --compact-brand-spacing: -1.1px;
+  --viewport-height: 100dvh;
+  --dialog-width: 540px;
+  --dialog-radius: 12px;
+  --dialog-viewport-gap: 32px;
+}
+
+:root {
+  --compact-red-bg: #fcf0eb;
+  --compact-amber-bg: #faf3de;
+  --compact-blue-bg: #eef3fa;
+  --compact-neutral-bg: #f0f2ed;
+  --progress-width: 82px;
+  --progress-height: 3px;
+  --status-dot-size: 5px;
+}
+
+:root {
+  --font-control-size: 12px;
+  --font-control-family: var(--compact-font);
+  --button-height: 32px;
+  --button-border: #7f8d74;
+  --button-hover: #eef2e9;
+  --button-active: #e1e8d9;
+  --button-primary-text: var(--bg);
+  --compact-button-border: #7f8d74;
+  --compact-button-hover: #eef5e9;
+  --compact-button-active: #dce8d4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --button-border: #69776a;
+    --button-hover: #29342b;
+    --button-active: #344336;
+  }
+}
+
+:root {
+  --z-table-header: 1;
 }

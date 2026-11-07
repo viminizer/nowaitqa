@@ -26,14 +26,13 @@ const HistoryPage = lazy(() =>
 export function App() {
   const { path, query, params } = useHashLocation()
   const runId = path.match(/^\/runs\/(\d+)$/)?.[1]
-  const before = params.get('before')
   const page = Math.max(0, Number.parseInt(params.get('page') ?? '', 10) || 0)
   return (
     <AppShell path={path}>
       <ErrorBoundary key={`${path}?${query}`}>
         <Suspense fallback={<Loading />}>
           {runId ? (
-            <RunPage id={Number(runId)} page={page} />
+            <RunPage id={Number(runId)} page={page} view={params.get('view') ?? 'overview'} />
           ) : path === '/history' ? (
             <HistoryPage params={params} />
           ) : path === '/fixtures' ? (
@@ -41,7 +40,7 @@ export function App() {
           ) : path === '/devices' ? (
             <DevicesPage />
           ) : (
-            <RunsPage before={before} />
+            <RunsPage params={params} />
           )}
         </Suspense>
       </ErrorBoundary>

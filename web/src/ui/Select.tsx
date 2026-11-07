@@ -42,7 +42,7 @@ export function Select({
         <SelectValue />
         <span aria-hidden="true">⌄</span>
       </Button>
-      <Popover className="select-popover">
+      <Popover className="select-popover" data-appearance="compact">
         <ListBox className="select-options" items={options}>
           {(option) => (
             <ListBoxItem id={option.value} textValue={option.label} className="select-option">

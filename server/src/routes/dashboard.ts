@@ -19,6 +19,7 @@ import {
   RunAgainBody,
   RunDetail,
   RunList,
+  RunListQuery,
 } from '@nowait/shared'
 import { eq, getTableColumns, sql } from 'drizzle-orm'
 import type { FastifyReply } from 'fastify'
@@ -67,11 +68,11 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     '/dashboard/api/runs',
     {
       schema: {
-        querystring: z.object({ before: DbIdParam.optional() }),
+        querystring: RunListQuery,
         response: { 200: RunList },
       },
     },
-    async (req) => listRuns(req.query.before),
+    async (req) => listRuns(req.query),
   )
 
   app.get(

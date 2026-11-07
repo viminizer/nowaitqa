@@ -412,6 +412,14 @@ It can also:
 - **Run a finished run again:** all its scenarios, only the failed ones, or one failed attempt.
   This starts a new run with the same app build, commit and split; the old run keeps its results.
 
+The compact Runs page shows 10 runs per page. Status filters and search cover all saved runs;
+summary counts cover only the current page. Filters and pagination are stored in the URL so views
+can be bookmarked. Start run opens a keyboard-accessible dialog with custom dropdowns and optional
+OS coverage. A failed start keeps the entered values; a failed refresh retains the last results
+and offers Try again. Desktop pages keep headings, filters and pagination fixed while table data scrolls. Mobile pages
+scroll naturally. Device registration opens in a dialog, and run details have separate overview,
+attempts, coverage and timeline views. Standalone actions share visible secondary buttons.
+
 Each action is written to the server log.
 
 Phones shows runner connectivity separately from device activity: **waiting for runner** until

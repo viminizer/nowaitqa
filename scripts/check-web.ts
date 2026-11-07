@@ -100,6 +100,24 @@ export function checkWeb(project: string): WebFinding[] {
       ast.walkDecls((decl) => {
         const line = decl.source?.start?.line ?? 1,
           value = decl.value
+        if (/^overflow(?:-[xy])?$/.test(decl.prop) && /\b(?:auto|scroll)\b/.test(value)) {
+          const selector = decl.parent?.type === 'rule' ? decl.parent.selector : ''
+          const ownsTable =
+            file === resolve(styles, 'components/content.css') && selector === '.scroll'
+          const ownsViewport = file === resolve(styles, 'viewport.css') && selector === '.scroll'
+          const ownsOverlay =
+            file === resolve(styles, 'components/dialog.css') &&
+            ['.dialog-overlay', '.dialog-modal'].includes(selector)
+          const ownsSelect =
+            file === resolve(styles, 'components/select.css') && selector === '.select-popover'
+          if (!ownsTable && !ownsViewport && !ownsOverlay && !ownsSelect)
+            report(
+              file,
+              line,
+              'styles/scroll-owner',
+              'scrolling belongs to shared table or overlay containers; desktop pages must fit the viewport',
+            )
+        }
         if (decl.prop.startsWith('--')) declared.add(decl.prop)
         for (const match of value.matchAll(/var\(\s*(--[\w-]+)/g))
           references.push({ file, line, name: match[1] ?? '' })
@@ -462,6 +480,12 @@ export function checkWeb(project: string): WebFinding[] {
           at(node, 'react/dom', 'React owns DOM content and styles')
         if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
           const tag = node.tagName.getText(tree)
+          if (tag === 'a' && owner?.startsWith('feature:'))
+            at(
+              node,
+              'ui/link',
+              'use shared Link; navigation actions default to visible secondary buttons, inline references opt in explicitly',
+            )
           const primitiveOwner: Record<string, string> = {
             button: 'ui/Button.tsx',
             input: 'ui/Input.tsx',
@@ -538,6 +562,33 @@ export function checkWeb(project: string): WebFinding[] {
               )
             if (key === 'className' && attr.initializer && ts.isStringLiteral(attr.initializer)) {
               for (const name of attr.initializer.text.split(/\s+/).filter(Boolean)) {
+                const scrollOwner: Record<string, string> = {
+                  scroll: 'ui/Table.tsx',
+                  'dialog-overlay': 'ui/Dialog.tsx',
+                  'dialog-modal': 'ui/Dialog.tsx',
+                  'select-popover': 'ui/Select.tsx',
+                }
+                if (scrollOwner[name] && local !== scrollOwner[name])
+                  at(
+                    attr,
+                    'ui/scroll-owner',
+                    'only the shared table or overlay component creates its scroll region',
+                  )
+                const layoutOwner: Record<string, string> = {
+                  panel: 'ui/DataPanel.tsx',
+                  'panel-heading': 'ui/DataPanel.tsx',
+                  'panel-meta': 'ui/DataPanel.tsx',
+                  'panel-description': 'ui/DataPanel.tsx',
+                  toolbar: 'ui/DataPanel.tsx',
+                  'table-footer': 'ui/TableFooter.tsx',
+                  'empty-state': 'ui/EmptyState.tsx',
+                  summary: 'ui/Summary.tsx',
+                  page: 'ui/Page.tsx',
+                  'page-heading': 'ui/Page.tsx',
+                  'page-title': 'ui/Page.tsx',
+                }
+                if (layoutOwner[name] && local !== layoutOwner[name])
+                  at(attr, 'ui/layout-owner', 'page composition uses the shared layout component')
                 if (!classes.has(name))
                   at(attr, 'styles/class', `class ${name} is not declared in centralized styles`)
                 if (

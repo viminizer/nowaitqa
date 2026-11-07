@@ -77,8 +77,22 @@ pending mutation, keyboard focus and pagination. Compact views should fit ordina
 windows where practical. Long data and small screens must remain accessible: page/inner-table
 scrolling and pagination are valid; hiding content to manufacture a no-scroll screenshot is not.
 
-The compact HTML mockup is a design reference. This change establishes shared structure and
-checks; it does not replace all existing screen layouts with that mockup. Device-setup PR45 is
+Every dashboard screen follows the approved compact Runs reference: the same sidebar, typography,
+paper panels, soft status badges and visible secondary controls. Page and AppShell always use this
+layout; Select overlays share its theme. DataPanel, TableFooter, EmptyState and Summary own repeated
+composition; the UI checker rejects private copies of their layout classes. Runs uses an
+accessible start-run Dialog. Search/status/cursor live in the hash URL; unsubmitted search and
+dialog fields stay local. Search and status apply on the server before pagination across all
+saved runs. The compact page requests 10 runs; summary counts explicitly describe only that page.
+The API still defaults to 50 runs for existing callers and accepts bounded limits of 1–50.
+Search is a case-insensitive literal substring of id/build/commit/trigger/platform; SQL wildcard
+characters are literal text. Pagination preserves committed filters, and exact final pages have
+no spurious older link. Build filename labels omit URL credentials/query strings.
+
+The shared dialog traps/restores focus, offers Escape/outside cancellation, and blocks dismissal
+while a start request is pending. Failures keep values and show the shared action error; success
+navigates to the durable new run. Hidden native select fields preserve platform/policy submission.
+OS coverage is optional and retains existing profile semantics. Device-setup PR45 is
 separate and must migrate to these shared boundaries when rebased.
 
 ## Changing the rules
@@ -87,3 +101,37 @@ Add a shared variant or token when a new need is real, then use it from the feat
 a diagnostic or create a private CSS entry point to get a page through CI. Update the shared policy,
 self-test and documentation together when the architecture intentionally changes. The project
 rulebook remains in private project memory; this document describes executable public conventions.
+
+## Button hierarchy
+
+`Button` and `Link` share the same centralized primary/secondary visual contract. Secondary is the
+default: a visible border, surface, consistent padding and height, with hover/pressed/focus states.
+Disabled native buttons keep their visible boundary. Primary marks the main action. There is no
+quiet text-only button variant.
+
+Use `Link` for navigating actions: Clear filters, pagination, downloads and evidence entry points.
+It retains anchor semantics, keyboard activation and open-in-new-tab behavior while looking like a
+secondary button. Inline record/scenario references explicitly use `variant="inline"`. Native
+anchors in features fail `check:ui`; shared components own rendering. Deciding whether text is an
+inline reference or a standalone action still requires review.
+
+## Desktop viewport and table scrolling
+
+Desktop layouts (851px and wider) fill the viewport. Titles, filters, actions and pagination remain
+visible; the shared Table owns data scrolling and sticky column headers. Mobile layouts scroll
+naturally. Device registration opens a shared dialog; run details use URL-addressable overview,
+attempts, coverage and timeline views so large detail sets remain inside tables. Overlays can
+scroll internally when needed, independently of the page. Never hide rows or truncate data to fit.
+
+`styles/viewport.css` owns the viewport layout. `check:ui` rejects private scroll containers outside
+the shared table/dialog/select owners. Table is a named keyboard-focusable region: its narrowly
+scoped Biome noNoninteractiveTabindex exception enables keyboard scrolling, as described in
+[MDN overflow accessibility](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow#accessibility).
+Other files retain the accessibility rule. Browser checks verify desktop document size, actual
+table scrolling/header/pagination positions, and natural mobile scrolling.
+
+Phones summarizes registered device contact/activity without claiming execution readiness. Fixtures
+and Reliability explicitly scope summary counts to the current page. Reliability preserves each
+cohort's full-window denominator and never pools unlike cohorts. Run details separate scenario
+outcomes from the saved or derived release gate. Filters, export links, recovery confirmations and
+URL views retain their existing behavior. Desktop data tables own scrolling; mobile flows naturally.
