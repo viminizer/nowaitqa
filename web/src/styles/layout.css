@@ -1,0 +1,36 @@
+header {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 4);
+  padding: var(--space) calc(var(--space) * 3);
+  background: var(--surface);
+  border-bottom: var(--border-width) solid var(--line);
+}
+header a {
+  text-decoration: none;
+  color: var(--text);
+}
+.brand {
+  font-weight: var(--weight-bold);
+}
+nav {
+  display: flex;
+  gap: calc(var(--space) * 2);
+}
+nav a {
+  color: var(--muted);
+  padding: var(--space) 0;
+}
+nav a[aria-current="page"] {
+  color: var(--text);
+  box-shadow: inset 0 calc(var(--focus-width) * -1) var(--accent);
+}
+main {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: calc(var(--space) * 3);
+}
+
+.page {
+  min-width: 0;
+}

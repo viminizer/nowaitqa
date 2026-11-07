@@ -1,0 +1,44 @@
+/* Status colors: text in badges and counts, fill in timeline blocks. */
+.status-passed,
+.status-idle,
+.status-online {
+  --c: var(--passed);
+}
+.status-flaky,
+.status-paused {
+  --c: var(--flaky);
+}
+.status-failed,
+.status-offline {
+  --c: var(--failed);
+}
+.status-running,
+.status-leased,
+.status-busy {
+  --c: var(--running);
+}
+.status-pending,
+.status-disabled,
+.status-waiting {
+  --c: var(--pending);
+}
+.status {
+  display: inline-block;
+  white-space: nowrap;
+  padding: 0 var(--space);
+  border: var(--border-width) solid var(--c);
+  border-radius: var(--radius-pill);
+  color: var(--c);
+  font-size: var(--font-label-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--line-badge);
+}
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space);
+}
+.count {
+  color: var(--c);
+  white-space: nowrap;
+}

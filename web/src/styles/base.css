@@ -1,0 +1,33 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--font-body-size) / var(--line-body) var(--font);
+}
+a {
+  color: var(--accent);
+}
+code {
+  font-family: var(--mono);
+  font-size: var(--font-code-size);
+}
+h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  font-size: var(--font-page-title-size);
+  margin: 0 0 calc(var(--space) * 2);
+}
+h2 {
+  font-size: var(--font-section-title-size);
+  margin: calc(var(--space) * 4) 0 var(--space);
+}
+
+@media (max-width: 600px) {
+  h1 {
+    font-size: var(--font-page-title-mobile);
+  }
+}

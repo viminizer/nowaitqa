@@ -1,0 +1,53 @@
+.action-form {
+  padding: calc(var(--space) * 2);
+  background: var(--surface);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.action-form h2 {
+  margin-top: 0;
+}
+.action-form fieldset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) auto;
+  align-items: end;
+  gap: calc(var(--space) * 2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.action-form label {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) / 2);
+  min-width: 0;
+}
+.input,
+.select-trigger {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(var(--space) / 2) var(--space);
+}
+.action-form .action {
+  margin-left: 0;
+}
+.action-form .error {
+  display: block;
+  margin-top: var(--space);
+}
+.action-form:where([data-layout="two-column"]) fieldset {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+@media (max-width: 600px) {
+  .action-form fieldset {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

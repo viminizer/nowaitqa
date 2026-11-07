@@ -1,0 +1,59 @@
+/* Colors, spacing and type come from these tokens only. */
+:root {
+  --font-body-size: 15px;
+  --font-page-title-size: 1.5rem;
+  --font-page-title-mobile: 1.375rem;
+  --font-section-title-size: 1.1rem;
+  --font-code-size: 0.9em;
+  --font-small-size: 0.8rem;
+  --font-label-size: 0.75rem;
+  --border-width: 1px;
+  --focus-width: 2px;
+  --content-width: 1200px;
+  --error-line-width: 40ch;
+  --thumbnail-height: 64px;
+  --radius-pill: 999px;
+  --lane-min-width: 8rem;
+  --lane-max-width: 14rem;
+  --lane-height: 1.75rem;
+  --popover-max-height: 20rem;
+  --sr-clip-inset: 50%;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --line-body: 1.5;
+  --line-badge: 1.6;
+  --radius-small: 2px;
+  --timeline-block-min-width: 2px;
+  --sr-size: 1px;
+  color-scheme: light dark;
+  --bg: #fafafa;
+  --surface: #fff;
+  --text: #1c1c1e;
+  --muted: #6b6b70;
+  --line: #e2e2e6;
+  --accent: #2563eb;
+  --passed: #15803d;
+  --flaky: #b45309;
+  --failed: #dc2626;
+  --running: #2563eb;
+  --pending: #8e8e93;
+  --space: 0.5rem;
+  --radius: 6px;
+  --font: system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111113;
+    --surface: #1a1a1d;
+    --text: #ececef;
+    --muted: #9a9aa1;
+    --line: #2c2c31;
+    --accent: #60a5fa;
+    --passed: #4ade80;
+    --flaky: #fbbf24;
+    --failed: #f87171;
+    --running: #60a5fa;
+    --pending: #8e8e93;
+  }
+}

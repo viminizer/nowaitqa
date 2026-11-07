@@ -1,0 +1,52 @@
+.select {
+  min-width: 0;
+}
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space);
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(var(--space) / 2) var(--space);
+  cursor: pointer;
+}
+.select-trigger:focus-visible,
+.select-option[data-focus-visible] {
+  outline: var(--focus-width) solid var(--accent);
+  outline-offset: var(--focus-width);
+}
+.select-popover {
+  min-width: var(--trigger-width);
+  max-height: var(--popover-max-height);
+  overflow: auto;
+  padding: calc(var(--space) / 2);
+  background: var(--surface);
+  color: var(--text);
+  border: var(--border-width) solid var(--line);
+  border-radius: var(--radius);
+}
+.select-options {
+  outline: none;
+}
+.select-option {
+  padding: calc(var(--space) / 2) var(--space);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.select-option[data-focused] {
+  background: var(--bg);
+}
+.select-option[data-selected] {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+.select[data-disabled] .select-trigger {
+  color: var(--muted);
+  cursor: wait;
+}

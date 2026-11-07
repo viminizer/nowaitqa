@@ -757,3 +757,12 @@ unknown outcomes are excluded, with all counts shown. Raw flaky sample counts re
 including conservative retry classification after infrastructure interruptions. Gate decisions
 continue to use those raw scenario outcomes. History does not automatically quarantine tests,
 change release policy, or rewrite failed-only reruns into the original run.
+
+
+## Frontend conventions
+
+The dashboard uses shared React controls and centralized CSS tokens. Feature imports, data access,
+control usage and styling are checked by `pnpm check:ui`, included in `pnpm lint`.
+`pnpm check:ui:selftest` verifies the checks with disposable failure/allowed examples. CI runs
+typecheck, lint, policy self-tests and the web build. See [frontend structure and checks](docs/frontend.md)
+for the folder layout, enforced boundaries and browser-review requirements.

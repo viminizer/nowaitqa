@@ -1,7 +1,21 @@
 import { RunList } from '@nowait/shared'
 import type { FormEvent } from 'react'
-import { useAction, useApi } from './api.ts'
-import { ActionError, Counts, duration, Loaded, openRun, Status, time } from './ui.tsx'
+import { useAction, useApi } from '../../lib/api.ts'
+import { Form } from '../../ui/Form.tsx'
+import {
+  ActionError,
+  Button,
+  Counts,
+  duration,
+  Input,
+  Loaded,
+  openRun,
+  Page,
+  Status,
+  Table,
+  time,
+} from '../../ui/index.ts'
+import { Select } from '../../ui/Select.tsx'
 
 function StartRun() {
   const action = useAction()
@@ -31,24 +45,26 @@ function StartRun() {
     )
   }
   return (
-    <form
-      className="action-form"
-      onSubmit={submit}
-      aria-labelledby="start-run-title"
-      aria-busy={action.isPending}
-    >
+    <Form onSubmit={submit} aria-labelledby="start-run-title" aria-busy={action.isPending}>
       <h2 id="start-run-title">Start run</h2>
       <fieldset disabled={action.isPending}>
         <label htmlFor="start-platform">
           Platform
-          <select id="start-platform" name="platform" defaultValue="android">
-            <option value="android">Android</option>
-            <option value="ios">iOS Simulator</option>
-          </select>
+          <Select
+            id="start-platform"
+            name="platform"
+            defaultValue="android"
+            label="Platform"
+            options={[
+              { value: 'android', label: 'Android' },
+              { value: 'ios', label: 'iOS Simulator' },
+            ]}
+            disabled={action.isPending}
+          />
         </label>
         <label htmlFor="start-build">
           App build URL or path
-          <input
+          <Input
             id="start-build"
             name="appBuild"
             type="text"
@@ -62,14 +78,21 @@ function StartRun() {
         </label>
         <label htmlFor="start-release-policy">
           Release policy
-          <select id="start-release-policy" name="releasePolicy" defaultValue="permissive">
-            <option value="permissive">Permissive — accept later-pass recovery</option>
-            <option value="strict">Strict — reject flaky scenarios</option>
-          </select>
+          <Select
+            id="start-release-policy"
+            name="releasePolicy"
+            defaultValue="permissive"
+            label="Release policy"
+            options={[
+              { value: 'permissive', label: 'Permissive \u2014 accept later-pass recovery' },
+              { value: 'strict', label: 'Strict \u2014 reject flaky scenarios' },
+            ]}
+            disabled={action.isPending}
+          />
         </label>
         <label htmlFor="start-versions">
           Required OS versions (optional)
-          <input
+          <Input
             id="start-versions"
             name="versions"
             placeholder="15, 16"
@@ -81,7 +104,7 @@ function StartRun() {
           </span>
         </label>
         <span className="action">
-          <button type="submit">{action.isPending ? 'Starting…' : 'Start run'}</button>
+          <Button type="submit">{action.isPending ? 'Starting…' : 'Start run'}</Button>
         </span>
       </fieldset>
       <p className="muted" id="start-build-help">
@@ -89,15 +112,14 @@ function StartRun() {
         latest scenarios available from a runner.
       </p>
       <ActionError error={action.error} />
-    </form>
+    </Form>
   )
 }
 
 export function RunsPage({ before }: { before: string | null }) {
   const state = useApi(before ? `/runs?before=${before}` : '/runs', RunList)
   return (
-    <>
-      <h1>Runs</h1>
+    <Page title="Runs">
       <StartRun />
       <h2>{before ? 'Older runs' : 'Recent runs'}</h2>
       <Loaded state={state}>
@@ -106,45 +128,43 @@ export function RunsPage({ before }: { before: string | null }) {
             <p className="muted">{before ? 'No older runs.' : 'No runs yet. Start one above.'}</p>
           ) : (
             <>
-              <div className="scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Run</th>
-                      <th>Status</th>
-                      <th>Scenarios</th>
-                      <th>Platform</th>
-                      <th>Commit</th>
-                      <th>Trigger</th>
-                      <th>Started</th>
-                      <th>Duration</th>
+              <Table>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Status</th>
+                    <th>Scenarios</th>
+                    <th>Platform</th>
+                    <th>Commit</th>
+                    <th>Trigger</th>
+                    <th>Started</th>
+                    <th>Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((run) => (
+                    <tr key={run.id}>
+                      <td>
+                        <a href={`#/runs/${run.id}`}>#{run.id}</a>
+                        {run.split === 'fixed' && <span className="muted"> fixed</span>}
+                      </td>
+                      <td>
+                        <Status status={run.status} />
+                      </td>
+                      <td>
+                        <Counts counts={run.counts} />
+                      </td>
+                      <td>{run.platform}</td>
+                      <td>
+                        <code>{run.commit.slice(0, 7)}</code>
+                      </td>
+                      <td>{run.trigger}</td>
+                      <td>{time(run.createdAt)}</td>
+                      <td>{duration(run.durationMs)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((run) => (
-                      <tr key={run.id}>
-                        <td>
-                          <a href={`#/runs/${run.id}`}>#{run.id}</a>
-                          {run.split === 'fixed' && <span className="muted"> fixed</span>}
-                        </td>
-                        <td>
-                          <Status status={run.status} />
-                        </td>
-                        <td>
-                          <Counts counts={run.counts} />
-                        </td>
-                        <td>{run.platform}</td>
-                        <td>
-                          <code>{run.commit.slice(0, 7)}</code>
-                        </td>
-                        <td>{run.trigger}</td>
-                        <td>{time(run.createdAt)}</td>
-                        <td>{duration(run.durationMs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </Table>
               <p className="pager">
                 {before && <a href="#/">Newest runs</a>}
                 {older && <a href={`#/?before=${older}`}>Older runs</a>}
@@ -153,6 +173,6 @@ export function RunsPage({ before }: { before: string | null }) {
           )
         }
       </Loaded>
-    </>
+    </Page>
   )
 }
