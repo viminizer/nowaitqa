@@ -31,6 +31,7 @@ import {
   type ResultBody,
   type RunDetail,
   type RunList,
+  type RunListQuery,
   type RunSummary,
   ScenarioHistoryPage,
   type ScenarioHistoryQuery,
@@ -336,18 +337,26 @@ function scenarioStatus(
 const runDuration = (run: Pick<Run, 'createdAt' | 'finishedAt'>) =>
   run.finishedAt && run.finishedAt.getTime() - run.createdAt.getTime()
 
-const RUNS_PAGE = 50
-
-// The dashboard's runs list: RUNS_PAGE runs older than `before`, newest first (R24).
-export async function listRuns(before?: number): Promise<RunList> {
+// Search and status apply before pagination. strpos treats %, _ and backslash as literal text.
+export async function listRuns({ before, status, q, limit }: RunListQuery): Promise<RunList> {
   const { inputIntent, resolvedInputs, expectedInputs, profiles, ...columns } =
     getTableColumns(runs)
   const page = await db
     .select(columns)
     .from(runs)
-    .where(before ? lt(runs.id, before) : undefined)
+    .where(
+      and(
+        before ? lt(runs.id, before) : undefined,
+        status ? eq(runs.status, status) : undefined,
+        q
+          ? sql`strpos(lower(concat_ws(' ', ${runs.id}::text, ${runs.appBuild}, ${runs.commit}, ${runs.trigger}, ${runs.platform})), lower(${q})) > 0`
+          : undefined,
+      ),
+    )
     .orderBy(desc(runs.id))
-    .limit(RUNS_PAGE)
+    .limit(limit + 1)
+  const hasOlder = page.length > limit
+  if (hasOlder) page.pop()
   if (page.length === 0) return { runs: [], older: null }
 
   // the latest attempt of every scenario in these runs
@@ -370,7 +379,7 @@ export async function listRuns(before?: number): Promise<RunList> {
 
   const byRun = Map.groupBy(latest, (a) => a.runId)
   return {
-    older: page.length === RUNS_PAGE ? (page.at(-1)?.id ?? null) : null,
+    older: hasOlder ? (page.at(-1)?.id ?? null) : null,
     runs: page.map((run) => ({
       ...run,
       recovery: recoveryOf(run),

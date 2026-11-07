@@ -69,6 +69,21 @@ try {
     negative(`raw ${tag}`, 'ui/primitive', () =>
       set(probe, `export function Drift(){return <${tag} />}`),
     )
+  negative('private shared-scroll wrapper', 'ui/scroll-owner', () =>
+    set(probe, 'export function Drift(){return <div className="scroll">Private content</div>}'),
+  )
+  negative('private panel composition', 'ui/layout-owner', () =>
+    set(
+      probe,
+      'export function Drift(){return <section className="panel">Private panel</section>}',
+    ),
+  )
+  negative('private page scrolling', 'styles/scroll-owner', () =>
+    append('web/src/styles/components/content.css', '.private-page{overflow-y:auto}'),
+  )
+  negative('raw text action link', 'ui/link', () =>
+    set(probe, 'export function Drift(){return <a href="#/">Clear filters</a>}'),
+  )
   negative('duplicate page-heading owner', 'ui/primitive', () =>
     set('web/src/ui/OtherHeading.tsx', 'export function OtherHeading(){return <h1>Other</h1>}'),
   )
@@ -213,6 +228,17 @@ try {
     append('web/index.html', '<script>document.body.innerHTML="x"</script>'),
   )
   negative('unparseable source', 'architecture/syntax', () => set(probe, 'export const value = {;'))
+  try {
+    set(
+      probe,
+      "import {Link} from '../../ui/Link.tsx';export function Drift(){return <Link href='#/'>Clear filters</Link>}",
+    )
+    assert.deepEqual(checkWeb(R), [])
+    results.push({ name: 'shared secondary navigation action', result: 'accepted' })
+    console.log('PASS shared secondary navigation action')
+  } finally {
+    restore()
+  }
   // Legitimate patterns must remain accepted, including callbacks that run outside render.
   try {
     set(

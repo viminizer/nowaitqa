@@ -3,24 +3,29 @@
 .status-idle,
 .status-online {
   --c: var(--passed);
+  --c-bg: var(--compact-green-bg);
 }
 .status-flaky,
 .status-paused {
   --c: var(--flaky);
+  --c-bg: var(--compact-amber-bg);
 }
 .status-failed,
 .status-offline {
   --c: var(--failed);
+  --c-bg: var(--compact-red-bg);
 }
 .status-running,
 .status-leased,
 .status-busy {
   --c: var(--running);
+  --c-bg: var(--compact-blue-bg);
 }
 .status-pending,
 .status-disabled,
 .status-waiting {
   --c: var(--pending);
+  --c-bg: var(--compact-neutral-bg);
 }
 .status {
   display: inline-block;
@@ -41,4 +46,44 @@
 .count {
   color: var(--c);
   white-space: nowrap;
+}
+
+.status[data-appearance="soft"] {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space) * 0.75);
+  border: 0;
+  background: var(--c-bg);
+}
+.status[data-appearance="soft"]::before {
+  content: "";
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+.scenario-results {
+  display: inline-flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 0.25);
+  font-size: var(--compact-table-size);
+}
+.scenario-progress {
+  display: block;
+  appearance: none;
+  border: 0;
+  width: var(--progress-width);
+  height: var(--progress-height);
+  color: var(--passed);
+  background: var(--line);
+  accent-color: var(--passed);
+}
+.scenario-progress::-webkit-progress-bar {
+  background: var(--line);
+}
+.scenario-progress::-webkit-progress-value {
+  background: var(--passed);
+}
+.scenario-progress::-moz-progress-bar {
+  background: var(--passed);
 }

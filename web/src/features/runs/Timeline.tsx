@@ -1,5 +1,5 @@
 import type { RunDetail } from '@nowait/shared'
-import { duration } from '../../ui/index.ts'
+import { duration, EmptyState, Table } from '../../ui/index.ts'
 import { TimelineBlock } from '../../ui/TimelineBlock.tsx'
 
 // One lane per phone, one block per attempt, from lease to result. The gaps are idle time: with the
@@ -20,55 +20,66 @@ export function Timeline({ run }: { run: RunDetail }) {
     ]),
   ].sort()
 
-  if (phones.length === 0) return <p className="muted">No phone has taken work yet.</p>
+  if (phones.length === 0)
+    return (
+      <EmptyState
+        title="No execution timeline yet"
+        description="No phone has taken work for this run."
+      />
+    )
   return (
-    <div className="timeline">
-      {phones.map((phone) => {
-        const stats = run.devices.find((d) => d.name === phone)
-        return (
-          <div className="lane" key={phone}>
-            <div className="lane-name">
-              {phone}
-              {/* busy share is known once the run is over */}
-              {stats && run.durationMs ? (
-                <span className="muted">
-                  {' '}
-                  {Math.round((stats.busyMs / run.durationMs) * 100)}% busy
-                </span>
-              ) : null}
-            </div>
-            <div className="lane-bar">
-              {run.timeline.map((a) => {
-                if (a.device !== phone || !a.leasedAt) return null
-                const from = a.leasedAt.getTime()
-                const to = a.finishedAt?.getTime() ?? end
-                const label = `${a.scenarioId}${a.profile ? ` [${a.profile.name}]` : ''}, attempt ${a.attempt}: ${a.status}, ${duration(to - from)}`
-                return (
-                  <TimelineBlock
-                    key={a.queueId}
-                    left={percent(from - start)}
-                    width={percent(to - from)}
-                    status={a.status}
-                    label={label}
-                  />
-                )
-              })}
-            </div>
-          </div>
-        )
-      })}
-      <div className="lane">
-        <div />
-        <div className="axis">
-          <span>0s</span>
-          <span>{duration(total)}</span>
-        </div>
-      </div>
+    <>
+      <Table label="Execution timeline">
+        <thead>
+          <tr>
+            <th>Phone</th>
+            <th>Execution · 0s to {duration(total)}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {phones.map((phone) => {
+            const stats = run.devices.find((d) => d.name === phone)
+            return (
+              <tr key={phone}>
+                <td>
+                  {phone}
+                  {/* busy share is known once the run is over */}
+                  {stats && run.durationMs ? (
+                    <span className="muted">
+                      {' '}
+                      {Math.round((stats.busyMs / run.durationMs) * 100)}% busy
+                    </span>
+                  ) : null}
+                </td>
+                <td>
+                  <div className="lane-bar">
+                    {run.timeline.map((a) => {
+                      if (a.device !== phone || !a.leasedAt) return null
+                      const from = a.leasedAt.getTime()
+                      const to = a.finishedAt?.getTime() ?? end
+                      const label = `${a.scenarioId}${a.profile ? ` [${a.profile.name}]` : ''}, attempt ${a.attempt}: ${a.status}, ${duration(to - from)}`
+                      return (
+                        <TimelineBlock
+                          key={a.queueId}
+                          left={percent(from - start)}
+                          width={percent(to - from)}
+                          status={a.status}
+                          label={label}
+                        />
+                      )
+                    })}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </Table>
       {run.timelineCut && (
         <p className="muted">
           Shows the first {run.timeline.length} attempts the phones took, up to {duration(total)}.
         </p>
       )}
-    </div>
+    </>
   )
 }

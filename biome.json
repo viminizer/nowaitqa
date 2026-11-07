@@ -38,6 +38,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["web/src/ui/Table.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noNoninteractiveTabindex": "off"
+          }
+        }
+      }
     }
   ]
 }

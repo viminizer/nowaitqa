@@ -31,3 +31,23 @@ h2 {
     font-size: var(--font-page-title-mobile);
   }
 }
+
+.page-title h1 {
+  margin: 0;
+}
+.page[data-compact] h1 {
+  font-size: var(--font-page-title-size);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--compact-letter-spacing);
+  line-height: var(--line-body);
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .page[data-compact] h1 {
+    font-size: var(--font-page-title-mobile);
+  }
+}
+
+.page-heading {
+  margin-bottom: calc(var(--space) * 2);
+}

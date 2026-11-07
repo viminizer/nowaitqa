@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-export function Table({ children }: { children: ReactNode }) {
+// A named, focusable scroll region lets keyboard users reach overflowing rows.
+export function Table({ children, label = 'Data table' }: { children: ReactNode; label?: string }) {
   return (
-    <div className="scroll">
+    <section className="scroll" aria-label={label} tabIndex={0}>
       <table>{children}</table>
-    </div>
+    </section>
   )
 }

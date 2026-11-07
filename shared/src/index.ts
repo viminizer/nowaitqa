@@ -712,6 +712,14 @@ export type RunSummary = z.infer<typeof RunSummary>
 // --- dashboard (read-only) ---
 
 // A page of runs, newest first. older: the `before` value for the next page, or null on the last.
+export const RunListQuery = z.object({
+  before: DbIdParam.optional(),
+  status: z.enum(['running', 'passed', 'failed']).optional(),
+  q: z.string().trim().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+})
+export type RunListQuery = z.infer<typeof RunListQuery>
+
 export const RunList = z.object({
   older: z.number().int().nullable(),
   runs: z.array(
