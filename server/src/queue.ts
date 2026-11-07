@@ -6,6 +6,7 @@ import {
   type AttemptOrigin,
   type AttemptPage,
   type Catalog,
+  type CreateLaunchBody,
   type CreateRunBody,
   countStatuses,
   type ExecutionProfile,
@@ -21,6 +22,7 @@ import {
   FullCommit,
   InputRuntime,
   inputSource,
+  type LaunchDetail,
   type Lease,
   MAX_ATTEMPT_FIXTURES,
   matchesProfile,
@@ -57,7 +59,16 @@ import {
 } from 'drizzle-orm'
 import { config } from './config.ts'
 import { db } from './db/index.ts'
-import { accounts, catalogs, devices, fixtureResources, queue, results, runs } from './db/schema.ts'
+import {
+  accounts,
+  catalogs,
+  devices,
+  fixtureResources,
+  launches,
+  queue,
+  results,
+  runs,
+} from './db/schema.ts'
 import { saveArtifact } from './storage/index.ts'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -150,23 +161,26 @@ export async function referencedRevisions(after = 0) {
 
 export class BadRunError extends Error {}
 
-export async function createRun(body: CreateRunBody) {
+async function catalogFor(commit?: string) {
   // The run's commit (a short one works, like git), or the newest catalog a runner sent.
   const [catalog] = await db
     .select()
     .from(catalogs)
-    .where(body.commit ? like(catalogs.commit, `${body.commit}%`) : undefined)
+    .where(commit ? like(catalogs.commit, `${commit}%`) : undefined)
     .orderBy(desc(catalogs.updatedAt))
     .limit(1)
   if (!catalog) {
     throw new BadRunError(
-      body.commit
-        ? `no runner has sent its scenarios for commit ${body.commit}`
+      commit
+        ? `no runner has sent its scenarios for commit ${commit}`
         : 'no runner has sent its scenarios yet',
     )
   }
   if (!FullCommit.safeParse(catalog.commit).success)
     throw new BadRunError('a full scenario revision is required; upgrade the catalog runner')
+  return catalog
+}
+function slotsFor(body: CreateRunBody, catalog: Catalog) {
   const scenarioIds = catalog.scenarios
     .filter((s) => s.platforms.includes(body.platform))
     .map((s) => s.id)
@@ -177,10 +191,82 @@ export async function createRun(body: CreateRunBody) {
   const slots = body.profiles.length
     ? body.profiles.flatMap((profile) => items.map((scenarioId) => ({ scenarioId, profile })))
     : items.map((scenarioId) => ({ scenarioId, profile: null }))
-  return insertRun({ ...body, commit: catalog.commit }, slots)
+  return slots
+}
+export async function createRun(body: CreateRunBody) {
+  const catalog = await catalogFor(body.commit)
+  return insertRun({ ...body, commit: catalog.commit }, slotsFor(body, catalog))
+}
+
+// Conflict checks compare normalized JSONB values (object key order is irrelevant).
+async function existingLaunch(body: CreateLaunchBody, connection: Tx | typeof db = db) {
+  const [existing] = await connection
+    .select({
+      id: launches.id,
+      same: sql<boolean>`${launches.request} = ${JSON.stringify(body)}::jsonb`,
+    })
+    .from(launches)
+    .where(eq(launches.id, body.id))
+    .limit(1)
+  if (existing && !existing.same)
+    throw new BadRunError('launch request ID was already used with different settings')
+  return existing?.id
+}
+export async function createLaunch(body: CreateLaunchBody) {
+  const existing = await existingLaunch(body)
+  if (existing) return existing
+  const catalog = await catalogFor(body.targets[0]?.commit)
+  // Prepare every target before writing; queue rows become visible together at commit.
+  const prepared: Awaited<ReturnType<typeof prepareRun>>[] = []
+  for (const target of body.targets)
+    prepared.push(
+      await prepareRun(
+        { ...target, commit: catalog.commit, launchId: body.id },
+        slotsFor(target, catalog),
+      ),
+    )
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(launches)
+      .values({ id: body.id, request: body })
+      .onConflictDoNothing()
+      .returning({ id: launches.id })
+    if (!inserted.length) {
+      await existingLaunch(body, tx)
+      return
+    }
+    for (const target of prepared) await saveRun(tx, target)
+  })
+  notifyWork()
+  return body.id
+}
+export async function getLaunch(id: string): Promise<LaunchDetail | null> {
+  const launch = await db.query.launches.findFirst({ where: eq(launches.id, id) })
+  if (!launch) return null
+  // Bounded by the two supported launch targets and the unique(platform,launchId) constraint.
+  const children = await db
+    .select()
+    .from(runs)
+    .where(eq(runs.launchId, id))
+    .orderBy(asc(runs.platform))
+    .limit(2)
+  if (children.length !== 2) throw new Error('launch is missing a platform run')
+  const summaries = await Promise.all(children.map(summarize))
+  const status = summaries.some((r) => r.status === 'running')
+    ? 'running'
+    : summaries.some((r) => r.status === 'failed')
+      ? 'failed'
+      : 'passed'
+  const releaseStatus = summaries.some((r) => r.release?.gate.status === 'rejected')
+    ? 'rejected'
+    : summaries.every((r) => r.release?.gate.status === 'accepted')
+      ? 'accepted'
+      : 'pending'
+  return { id, createdAt: launch.createdAt, status, releaseStatus, runs: summaries }
 }
 
 type NewRun = Pick<Run, 'platform' | 'appBuild' | 'commit' | 'trigger' | 'split'> & {
+  launchId?: string
   expectedInputs?: ResolvedInputs
   profiles?: ExecutionProfile[]
   releasePolicy: ReleasePolicy
@@ -210,7 +296,7 @@ async function expectedTimes(platform: Run['platform'], scenarioIds: string[]) {
 
 // Saves a run and queues its items (scenario ids, in order), then wakes waiting phones. Each item
 // gets its scenario's expected time, so phones take the longest first (leaseNext).
-async function insertRun(newRun: NewRun, items: RunSlot[]) {
+async function prepareRun(newRun: NewRun, items: RunSlot[]) {
   const { expectedInputs, profiles = [], ...fields } = newRun
   // fixed: deal the items out to the phones up front, round robin, like the old framework.
   const phones =
@@ -240,45 +326,60 @@ async function insertRun(newRun: NewRun, items: RunSlot[]) {
     items.map((i) => i.scenarioId),
   )
 
-  const runId = await db.transaction(async (tx) => {
-    const [run] = await tx
-      .insert(runs)
-      .values({
-        ...fields,
-        profiles: profiles.length ? profiles : null,
-        inputIntent: {
-          version: 1,
-          platform: fields.platform,
-          commit: fields.commit,
-          appSource: inputSource(fields.appBuild),
-          scenarios: items.map((i) => i.scenarioId),
-          profiles,
-          split: fields.split,
-        },
-        expectedInputs,
-        maxAttempts: config.MAX_ATTEMPTS,
-        maxInfrastructureRecoveries: config.MAX_INFRA_RECOVERIES,
-        maxRunInfrastructureRecoveries: config.MAX_RUN_INFRA_RECOVERIES,
-      })
-      .returning({ id: runs.id })
-    if (!run) throw new Error('run insert returned nothing')
-    await tx.insert(queue).values(
-      items.map(({ scenarioId, profile }, slot) => {
-        const eligible = phones.filter((d) => !profile || matchesProfile(d, profile))
-        return {
-          runId: run.id,
-          slot,
-          scenarioId,
-          profile,
-          assignedDevice: eligible[slot % eligible.length]?.name,
-          expectedMs: expected.get(scenarioId),
-        }
-      }),
-    )
-    return run.id
-  })
+  return { fields, profiles, expectedInputs, items, phones, expected }
+}
+async function saveRun(
+  tx: Tx,
+  {
+    fields,
+    profiles,
+    expectedInputs,
+    items,
+    phones,
+    expected,
+  }: Awaited<ReturnType<typeof prepareRun>>,
+) {
+  const [run] = await tx
+    .insert(runs)
+    .values({
+      ...fields,
+      profiles: profiles.length ? profiles : null,
+      inputIntent: {
+        version: 1,
+        platform: fields.platform,
+        commit: fields.commit,
+        appSource: inputSource(fields.appBuild),
+        scenarios: items.map((i) => i.scenarioId),
+        profiles,
+        split: fields.split,
+      },
+      expectedInputs,
+      maxAttempts: config.MAX_ATTEMPTS,
+      maxInfrastructureRecoveries: config.MAX_INFRA_RECOVERIES,
+      maxRunInfrastructureRecoveries: config.MAX_RUN_INFRA_RECOVERIES,
+    })
+    .returning({ id: runs.id })
+  if (!run) throw new Error('run insert returned nothing')
+  await tx.insert(queue).values(
+    items.map(({ scenarioId, profile }, slot) => {
+      const eligible = phones.filter((d) => !profile || matchesProfile(d, profile))
+      return {
+        runId: run.id,
+        slot,
+        scenarioId,
+        profile,
+        assignedDevice: eligible[slot % eligible.length]?.name,
+        expectedMs: expected.get(scenarioId),
+      }
+    }),
+  )
+  return run.id
+}
+async function insertRun(newRun: NewRun, items: RunSlot[]) {
+  const prepared = await prepareRun(newRun, items)
+  const id = await db.transaction((tx) => saveRun(tx, prepared))
   notifyWork()
-  return runId
+  return id
 }
 
 type Run = typeof runs.$inferSelect

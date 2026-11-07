@@ -30,7 +30,8 @@ Every request needs `Authorization: Bearer <token>`, except `GET /health` and th
 There are two tokens:
 
 - `RUNNER_TOKEN`: the runner. It can call every route.
-- `TRIGGER_TOKEN`: Jenkins. It can only start a run and read it (`POST /runs`, `GET /runs/:id`).
+- `TRIGGER_TOKEN`: Jenkins. It can start/read runs and grouped launches (`/runs`, `/launches`),
+  read manifests and scenario history. It cannot lease work or report results.
 
 | Route                      | Who calls it | What it does                                                       |
 | -------------------------- | ------------ | ------------------------------------------------------------------ |
@@ -774,3 +775,37 @@ control usage and styling are checked by `pnpm check:ui`, included in `pnpm lint
 `pnpm check:ui:selftest` verifies the checks with disposable failure/allowed examples. CI runs
 typecheck, lint, policy self-tests and the web build. See [frontend structure and checks](docs/frontend.md)
 for the folder layout, enforced boundaries and browser-review requirements.
+
+### Launch Android and iOS together
+
+In **Start run**, choose **Android + iOS Simulator**, supply an Android APK and an iOS Simulator
+`.app`/ZIP, and optionally set OS coverage for each platform. One launch contains two independent
+runs on the same scenario commit and shared release policy. They enter the queue atomically;
+execution still depends on registered devices. The launch view links to each run's full evidence,
+controls and retry history. A launch accepts release only when both platform gates accept; a child
+rerun creates separate history and does not replace the original launch result.
+
+Automation can call `POST /launches` with the trigger or runner token:
+
+```json
+{
+  "id": "b379bcf3-42f4-432e-84d0-b7fda20ea7c0",
+  "targets": [
+    { "platform": "android", "appBuild": "https://builds.example.com/app.apk" },
+    { "platform": "ios", "appBuild": "https://builds.example.com/app.app.zip" }
+  ]
+}
+```
+
+Generate a fresh UUID for each intentional launch. Repeating the same UUID and normalized request
+returns the same launch, including after a lost response or server restart. Reusing it with different
+settings returns400. Each target accepts the existing run options; commit, trigger, releasePolicy,
+split and repeat must match across targets. Profiles/builds are platform-specific. One catalog is
+resolved for the launch; missing platform scenarios rejects it without creating either run.
+`GET /launches/:id` returns both run summaries, the combined execution status and a separate release
+status. Dashboard equivalents are `/dashboard/api/launches` and `/dashboard/api/launches/:id`, using
+Basic auth and the existing action header for POST. Existing single-platform `/runs` is unchanged.
+
+Migration0021 adds the launch request table, nullable run grouping key and unique(platform,launch)
+index. Legacy runs remain ungrouped. Request identities follow the same retained-history lifecycle
+as runs; artifacts keep their existing retention policy. No runner or mobile-driver changes needed.

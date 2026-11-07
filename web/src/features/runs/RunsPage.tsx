@@ -148,6 +148,11 @@ export function RunsPage({ params }: { params: URLSearchParams }) {
                               {run.split === 'fixed' && ' · fixed'}
                             </span>
                           </div>
+                          {run.launchId && (
+                            <Link variant="inline" href={`#/launches/${run.launchId}`}>
+                              Android + iOS launch
+                            </Link>
+                          )}
                         </td>
                         <td>
                           <div className="inline-result">

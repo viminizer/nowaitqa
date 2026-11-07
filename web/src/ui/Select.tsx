@@ -15,6 +15,8 @@ export function Select({
   label,
   options,
   defaultValue,
+  value,
+  onValueChange,
   disabled,
   required,
   'aria-describedby': describedBy,
@@ -23,6 +25,8 @@ export function Select({
   name: string
   label: string
   options: readonly { value: string; label: string }[]
+  value?: string
+  onValueChange?: (value: string) => void
   defaultValue?: string
   disabled?: boolean
   required?: boolean
@@ -35,6 +39,8 @@ export function Select({
       aria-label={label}
       aria-describedby={describedBy}
       defaultSelectedKey={defaultValue}
+      selectedKey={value}
+      onSelectionChange={(key) => onValueChange?.(String(key))}
       isDisabled={disabled}
       isRequired={required}
     >

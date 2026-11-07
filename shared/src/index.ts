@@ -246,6 +246,30 @@ export const CreateRunBody = z
   })
 export type CreateRunBody = z.infer<typeof CreateRunBody>
 
+// A launch creates exactly one run for each platform, sharing execution settings and revision.
+export const CreateLaunchBody = z
+  .object({
+    id: z.uuid(),
+    targets: z.array(CreateRunBody).length(2),
+  })
+  .superRefine(({ targets }, ctx) => {
+    if (new Set(targets.map((t) => t.platform)).size !== 2)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['targets'],
+        message: 'select Android and iOS exactly once',
+      })
+    for (const key of ['commit', 'trigger', 'releasePolicy', 'split', 'repeat'] as const)
+      if (targets[0]?.[key] !== targets[1]?.[key])
+        ctx.addIssue({
+          code: 'custom',
+          path: ['targets'],
+          message: `launch targets must share ${key}`,
+        })
+  })
+export type CreateLaunchBody = z.infer<typeof CreateLaunchBody>
+export const CreatedLaunch = z.object({ id: z.uuid() })
+
 export const MAX_ATTEMPT_FIXTURES = 20
 export const FIXTURE_CLAIM_SECONDS = 180 // covers preparation +30s cleanup + process stop5s + finish HTTP10s
 export const FixtureName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9._-]{0,63}$/)
@@ -659,6 +683,7 @@ export function releaseReasonText(reason: ReleaseGate['reason']) {
 }
 
 export const RunSummary = z.object({
+  launchId: z.uuid().nullable().default(null),
   release: ReleaseReport.nullable().default(null),
   id: z.number().int(),
   platform: Platform,
@@ -708,6 +733,15 @@ export const RunSummary = z.object({
   ),
 })
 export type RunSummary = z.infer<typeof RunSummary>
+
+export const LaunchDetail = z.object({
+  id: z.uuid(),
+  createdAt: z.coerce.date(),
+  status: z.enum(['running', 'passed', 'failed']),
+  releaseStatus: z.enum(['pending', 'accepted', 'rejected']),
+  runs: z.array(RunSummary).length(2),
+})
+export type LaunchDetail = z.infer<typeof LaunchDetail>
 
 // --- dashboard (read-only) ---
 
