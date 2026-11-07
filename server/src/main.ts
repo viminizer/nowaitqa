@@ -10,14 +10,17 @@ import { runMigrations } from './db/index.ts'
 import { startNotifications } from './notify/index.ts'
 import {
   deleteOldFixtureRecords,
+  deleteOldSetups,
   expireLeases,
   expireRuns,
+  expireSetups,
   pauseUnhealthyDevices,
 } from './queue.ts'
 import { dashboardRoutes } from './routes/dashboard.ts'
 import { deviceRoutes } from './routes/devices.ts'
 import { fixtureRoutes } from './routes/fixtures.ts'
 import { runRoutes } from './routes/runs.ts'
+import { setupRoutes } from './routes/setup.ts'
 import { workRoutes } from './routes/work.ts'
 import { deleteOldArtifacts, store } from './storage/index.ts'
 
@@ -81,6 +84,7 @@ app.get('/health', async () => ({ ok: true }))
 await app.register(runRoutes)
 await app.register(workRoutes)
 await app.register(deviceRoutes)
+await app.register(setupRoutes)
 await app.register(fixtureRoutes)
 await app.register(dashboardRoutes)
 
@@ -106,6 +110,8 @@ await startNotifications(app.log)
 
 // Background jobs (shared/src/jobs.ts). The expiry jobs wait at first on their own, to give runners time to
 // come back after a restart (see queue.ts).
+every(15_000, 'expireSetups', expireSetups, app.log)
+every(24 * 60 * 60 * 1000, 'deleteOldSetups', deleteOldSetups, app.log)
 every(15_000, 'expireLeases', expireLeases, app.log)
 every(60_000, 'expireRuns', expireRuns, app.log)
 every(15_000, 'pauseUnhealthyDevices', pauseUnhealthyDevices, app.log)

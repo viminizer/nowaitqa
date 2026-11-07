@@ -38,6 +38,19 @@ import {
   ScenarioHistoryPage,
   type ScenarioHistoryQuery,
   type ScenarioStatus,
+  SETUP_CONTACT_SECONDS,
+  SETUP_MAX_SECONDS,
+  type SetupAuthority,
+  type SetupClaim,
+  type SetupContactBody,
+  type SetupCreateBody,
+  type SetupFinishBody,
+  type SetupOwner,
+  type SetupProgressBody,
+  type SetupReason,
+  type SetupReserveBody,
+  type SetupState,
+  type SetupTargetsPage,
   virtualDeviceClass,
 } from '@nowait/shared'
 import {
@@ -58,7 +71,7 @@ import {
   sql,
 } from 'drizzle-orm'
 import { config } from './config.ts'
-import { db } from './db/index.ts'
+import { db, type DbTransaction as Tx } from './db/index.ts'
 import {
   accounts,
   catalogs,
@@ -67,11 +80,20 @@ import {
   launches,
   queue,
   results,
+  runnerHosts,
   runs,
+  setupJobs,
 } from './db/schema.ts'
+import {
+  checkDevicePorts,
+  deviceBusy,
+  lockDeviceHost,
+  registerDeviceIn,
+  setupHoldsDevice,
+} from './devices.ts'
+
 import { saveArtifact } from './storage/index.ts'
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type QueueRow = typeof queue.$inferSelect
 const fixtureState = sql<FixtureState>`case
   when ${fixtureResources.claim} is not null and ${fixtureResources.claimUntil} <= now()
@@ -770,17 +792,8 @@ export async function leaseNext(
 
     // Check after locking the phone, before reserving another job or account. Expiry/result
     // handling must finish the old row before this phone can take more work.
-    const [busy] = await tx
-      .select({ id: queue.id })
-      .from(queue)
-      .where(
-        and(
-          eq(queue.device, device.name),
-          or(eq(queue.status, 'leased'), eq(queue.cleanupPending, true)),
-        ),
-      )
-      .limit(1)
-    if (busy) return null
+    if ((await deviceBusy(tx, device.name)) || (await setupHoldsDevice(tx, device.name)))
+      return null
 
     // The phone's current run first (a new run means a new session and app install), then the
     // oldest run. In a run, the longest scenario first, and one with no history yet before all:
@@ -1680,17 +1693,8 @@ export async function claimFixture(body: FixtureClaimBody): Promise<FixtureJob |
       )
       .for('no key update')
     if (!phone) return null
-    const [busy] = await tx
-      .select({ id: queue.id })
-      .from(queue)
-      .where(
-        and(
-          eq(queue.device, body.name),
-          or(eq(queue.status, 'leased'), eq(queue.cleanupPending, true)),
-        ),
-      )
-      .limit(1)
-    if (busy) return null
+    if ((await deviceBusy(tx, body.name)) || (await setupHoldsDevice(tx, body.name))) return null
+
     const [found] = await tx
       .select({ resource: fixtureResources, item: queue, run: runs })
       .from(fixtureResources)
@@ -2000,4 +2004,612 @@ export async function scenarioHistory(query: ScenarioHistoryQuery): Promise<Scen
     entries: rows.rows.slice(0, 50).map((r) => r.entry),
     next: rows.rows.length > 50 ? rows.rows[49]?.entry.key : null,
   })
+}
+
+// --- runner-host discovery and explicit setup -------------------------------------------------
+const setupState = sql<SetupState>`CASE WHEN ${setupJobs.status} = 'active' AND ${setupJobs.claimUntil} <= now() THEN 'interrupted' ELSE ${setupJobs.status} END`
+const setupColumns = {
+  id: setupJobs.id,
+  host: setupJobs.host,
+  target: setupJobs.target,
+  boot: setupJobs.boot,
+  status: setupState,
+  stage: setupJobs.stage,
+  reason: sql<SetupReason | null>`CASE WHEN ${setupJobs.status} = 'active' AND ${setupJobs.claimUntil} <= now() THEN 'owner_lost' ELSE ${setupJobs.reason} END`,
+  deviceName: setupJobs.deviceName,
+  createdAt: setupJobs.createdAt,
+  updatedAt: setupJobs.updatedAt,
+  cancelRequested: setupJobs.cancelRequested,
+  canResolve: sql<boolean>`${setupJobs.status} = 'interrupted' OR ${setupJobs.status} = 'active' AND ${setupJobs.claimUntil} <= now()`,
+  canCancel: sql<boolean>`(${setupJobs.status} = 'queued' OR ${setupJobs.status} = 'active' AND ${setupJobs.claimUntil} > now()) AND NOT ${setupJobs.cancelRequested}`,
+}
+const hostColumns = {
+  name: runnerHosts.name,
+  os: runnerHosts.os,
+  lastSeenAt: runnerHosts.lastSeenAt,
+  inventoryAt: runnerHosts.inventoryAt,
+  online: sql<boolean>`${runnerHosts.lastSeenAt} > now() - interval '60 seconds'`,
+  inventoryFresh: sql<boolean>`coalesce(${runnerHosts.lastSeenAt} > now() - interval '60 seconds' AND ${runnerHosts.inventoryAt} > now() - interval '120 seconds', false)`,
+  issues: sql<SetupReason[]>`${runnerHosts.inventory}->'issues'`,
+}
+export class SetupConflictError extends Error {}
+
+export async function contactSetupHost(body: SetupContactBody) {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, body.host)
+    const [old] = await tx
+      .select({
+        ...getTableColumns(runnerHosts),
+        live: sql<boolean>`${runnerHosts.lastSeenAt}>now()-interval '60 seconds'`,
+      })
+      .from(runnerHosts)
+      .where(eq(runnerHosts.name, body.host))
+      .for('update')
+    if (old && old.session !== body.session && old.live)
+      throw new SetupConflictError('another live runner owns this machine name')
+    if (old && old.session === body.session && old.appiumUrl !== body.appiumUrl)
+      throw new SetupConflictError('Appium configuration changed; restart the setup runner')
+    const inventory =
+      body.inventory ??
+      (old?.session === body.session
+        ? old.inventory
+        : { revision: randomUUID(), targets: [], issues: ['discovery_pending' as const] })
+    const values = {
+      name: body.host,
+      session: body.session,
+      os: body.os,
+      appiumUrl: body.appiumUrl,
+      inventory,
+      lastSeenAt: sql`now()`,
+      ...(body.inventory &&
+      (old?.session !== body.session || old?.inventory.revision !== body.inventory.revision)
+        ? { inventoryAt: sql`now()` }
+        : old?.session !== body.session
+          ? { inventoryAt: null }
+          : {}),
+    }
+    await tx
+      .insert(runnerHosts)
+      .values(values)
+      .onConflictDoUpdate({ target: runnerHosts.name, set: values })
+    if (old && old.session !== body.session) {
+      await tx
+        .update(setupJobs)
+        .set({ status: 'failed', reason: 'runner_offline', stage: 'done', updatedAt: sql`now()` })
+        .where(and(eq(setupJobs.host, body.host), eq(setupJobs.status, 'queued')))
+      await tx
+        .update(setupJobs)
+        .set({ status: 'interrupted', reason: 'owner_lost', updatedAt: sql`now()` })
+        .where(and(eq(setupJobs.host, body.host), eq(setupJobs.status, 'active')))
+    }
+    // A live, unambiguous identity can enrich legacy metadata without changing operational settings.
+    if (body.inventory)
+      for (const target of body.inventory.targets) {
+        if (!target.udid || target.issue || !['running', 'starting'].includes(target.state))
+          continue
+        const [phone] = await tx
+          .select()
+          .from(devices)
+          .where(
+            and(
+              eq(devices.host, body.host),
+              eq(devices.udid, target.udid),
+              eq(devices.platform, target.platform),
+            ),
+          )
+          .for('no key update')
+        if (!phone || (phone.virtualKey && phone.virtualKey !== target.key)) continue
+        const [other] = await tx
+          .select({ name: devices.name })
+          .from(devices)
+          .where(
+            and(
+              eq(devices.host, body.host),
+              eq(devices.virtualKey, target.key),
+              ne(devices.name, phone.name),
+            ),
+          )
+          .limit(1)
+        if (!other)
+          await tx
+            .update(devices)
+            .set({ virtualKey: target.key })
+            .where(eq(devices.name, phone.name))
+      }
+    let jobAlive = false,
+      cancelRequested = false
+    if (body.active) {
+      const [job] = await tx
+        .select()
+        .from(setupJobs)
+        .where(
+          and(
+            eq(setupJobs.id, body.active.id),
+            eq(setupJobs.host, body.host),
+            eq(setupJobs.session, body.session),
+            eq(setupJobs.claim, body.active.claim),
+            eq(setupJobs.status, 'active'),
+            sql`${setupJobs.claimUntil}>now() AND ${setupJobs.startedAt}+${SETUP_MAX_SECONDS}*interval '1 second'>now()`,
+          ),
+        )
+        .for('update')
+      if (job) {
+        cancelRequested = job.cancelRequested
+        if (!cancelRequested) {
+          await tx
+            .update(setupJobs)
+            .set({
+              claimUntil: sql`least(now()+${SETUP_CONTACT_SECONDS}*interval '1 second', ${setupJobs.startedAt}+${SETUP_MAX_SECONDS}*interval '1 second')`,
+            })
+            .where(eq(setupJobs.id, job.id))
+          jobAlive = true
+        }
+      }
+    }
+    return { jobAlive, cancelRequested }
+  })
+}
+
+export async function listSetupHosts(after?: string) {
+  const rows = await db
+    .select(hostColumns)
+    .from(runnerHosts)
+    .where(after ? sql`${runnerHosts.name}>${after}` : undefined)
+    .orderBy(runnerHosts.name)
+    .limit(26)
+  return { hosts: rows.slice(0, 25), next: rows.length > 25 ? (rows[24]?.name ?? null) : null }
+}
+export async function getSetupTargets(
+  host: string,
+  after?: string,
+): Promise<SetupTargetsPage | null> {
+  const [found] = await db
+    .select({ summary: hostColumns, inventory: runnerHosts.inventory })
+    .from(runnerHosts)
+    .where(eq(runnerHosts.name, host))
+  if (!found) return null
+  const sorted = found.inventory.targets
+    .filter((t) => !after || t.key > after)
+    .sort((a, b) => (a.key < b.key ? -1 : 1))
+  const page = sorted.slice(0, 50),
+    keys = page.map((t) => t.key)
+  // Registrations on one host are hardware-bounded; inventory itself is capped at100 targets.
+  const phones = await db
+    .select({
+      name: devices.name,
+      enabled: devices.enabled,
+      virtualKey: devices.virtualKey,
+      udid: devices.udid,
+    })
+    .from(devices)
+    .where(eq(devices.host, host))
+  const jobs = keys.length
+    ? await db
+        .selectDistinctOn([setupJobs.targetKey], { key: setupJobs.targetKey, job: setupColumns })
+        .from(setupJobs)
+        .where(and(eq(setupJobs.host, host), inArray(setupJobs.targetKey, keys)))
+        .orderBy(setupJobs.targetKey, desc(setupJobs.id))
+        .limit(50)
+    : []
+  const [blocking] = await db
+    .select(setupColumns)
+    .from(setupJobs)
+    .where(
+      and(eq(setupJobs.host, host), sql`${setupJobs.status} IN ('queued','active','interrupted')`),
+    )
+    .orderBy(setupJobs.id)
+    .limit(1)
+  return {
+    host: found.summary,
+    blocking: blocking ?? null,
+    targets: page.map((target) => {
+      const keyed = phones.find((p) => p.virtualKey === target.key)
+      const serial = target.udid ? phones.find((p) => p.udid === target.udid) : undefined
+      const conflict =
+        serial?.virtualKey && serial.virtualKey !== target.key
+          ? serial.name
+          : keyed && target.udid && keyed.udid !== target.udid
+            ? keyed.name
+            : null
+      return {
+        target,
+        registered: conflict ? null : (keyed ?? (serial && !serial.virtualKey ? serial : null)),
+        conflict,
+        job: jobs.find((j) => j.key === target.key)?.job ?? null,
+      }
+    }),
+    next: sorted.length > 50 ? (page[49]?.key ?? null) : null,
+  }
+}
+export async function getSetupJob(id: number) {
+  const [job] = await db.select(setupColumns).from(setupJobs).where(eq(setupJobs.id, id))
+  return job ?? null
+}
+async function freshSetupHost(tx: Tx, host: string, session?: string) {
+  const [found] = await tx
+    .select()
+    .from(runnerHosts)
+    .where(
+      and(
+        eq(runnerHosts.name, host),
+        session ? eq(runnerHosts.session, session) : undefined,
+        sql`${runnerHosts.lastSeenAt}>now()-interval '60 seconds' AND ${runnerHosts.inventoryAt}>now()-interval '120 seconds'`,
+      ),
+    )
+    .for('update')
+  if (!found)
+    throw new SetupConflictError('runner or discovery is unavailable; wait for a fresh report')
+  return found
+}
+export async function createSetup(body: SetupCreateBody) {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, body.host)
+    const host = await freshSetupHost(tx, body.host)
+    const target = host.inventory.targets.find((t) => t.key === body.key)
+    if (!target || target.state === 'unavailable' || target.issue)
+      throw new SetupConflictError('target is unavailable; refresh discovery and check its runtime')
+    const [open] = await tx
+      .select({ id: setupJobs.id, key: setupJobs.targetKey })
+      .from(setupJobs)
+      .where(
+        and(
+          eq(setupJobs.host, body.host),
+          sql`${setupJobs.status} IN ('queued','active','interrupted')`,
+        ),
+      )
+      .limit(1)
+    if (open) {
+      if (open.key !== body.key)
+        throw new SetupConflictError(
+          `machine already has setup #${open.id}; finish or resolve it first`,
+        )
+      return { id: open.id }
+    }
+    if (!body.boot && target.state === 'stopped')
+      throw new SetupConflictError('device is stopped; choose Start and register')
+    const [job] = await tx
+      .insert(setupJobs)
+      .values({
+        host: body.host,
+        session: host.session,
+        targetKey: target.key,
+        target,
+        boot: body.boot,
+      })
+      .returning({ id: setupJobs.id })
+    if (!job) throw new Error('setup insert returned nothing')
+    return job
+  })
+}
+export async function claimSetup(owner: SetupOwner): Promise<SetupClaim | null> {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, owner.host)
+    const host = await freshSetupHost(tx, owner.host, owner.session)
+    const [active] = await tx
+      .select({ id: setupJobs.id })
+      .from(setupJobs)
+      .where(
+        and(eq(setupJobs.host, owner.host), sql`${setupJobs.status} IN ('active','interrupted')`),
+      )
+      .limit(1)
+    if (active) return null
+    const [job] = await tx
+      .select()
+      .from(setupJobs)
+      .where(
+        and(
+          eq(setupJobs.host, owner.host),
+          eq(setupJobs.session, owner.session),
+          eq(setupJobs.status, 'queued'),
+        ),
+      )
+      .orderBy(setupJobs.id)
+      .limit(1)
+      .for('update', { skipLocked: true })
+    if (!job) return null
+    const target = host.inventory.targets.find((t) => t.key === job.targetKey)
+    const matches = await tx
+      .select()
+      .from(devices)
+      .where(
+        and(
+          eq(devices.host, owner.host),
+          or(
+            eq(devices.virtualKey, job.targetKey),
+            target?.udid ? eq(devices.udid, target.udid) : sql`false`,
+          ),
+        ),
+      )
+      .orderBy(devices.name)
+      .limit(2)
+      .for('no key update')
+    const phone = matches[0]
+    const conflict =
+      matches.length > 1 ||
+      !!(phone?.virtualKey && phone.virtualKey !== job.targetKey) ||
+      !!(phone && target?.udid && phone.udid !== target.udid)
+    const busy = !!phone && !conflict && (await deviceBusy(tx, phone.name))
+    if (conflict || !target || target.issue || target.state === 'unavailable' || busy) {
+      await tx
+        .update(setupJobs)
+        .set({
+          status: 'failed',
+          stage: 'done',
+          reason: conflict ? 'registration_conflict' : busy ? 'device_busy' : 'runtime_unavailable',
+          updatedAt: sql`now()`,
+        })
+        .where(eq(setupJobs.id, job.id))
+      return null
+    }
+    const claim = randomUUID()
+    await tx
+      .update(setupJobs)
+      .set({
+        target,
+        claim,
+        status: 'active',
+        stage: 'checking',
+        deviceName: phone?.name ?? null,
+        startedAt: sql`now()`,
+        claimUntil: sql`now()+${SETUP_CONTACT_SECONDS}*interval '1 second'`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(setupJobs.id, job.id))
+    if (phone && target.state === 'stopped')
+      await tx.update(devices).set({ healthSince: sql`now()` }).where(eq(devices.name, phone.name))
+    const view = await tx.select(setupColumns).from(setupJobs).where(eq(setupJobs.id, job.id))
+    if (!view[0]) throw new Error('setup claim returned no row')
+    return { ...view[0], claim, existing: phone ?? null }
+  })
+}
+async function ownedSetup(tx: Tx, owner: SetupAuthority) {
+  const [host] = await tx
+    .select()
+    .from(runnerHosts)
+    .where(and(eq(runnerHosts.name, owner.host), eq(runnerHosts.session, owner.session)))
+  const [job] = await tx
+    .select()
+    .from(setupJobs)
+    .where(
+      and(
+        eq(setupJobs.id, owner.id),
+        eq(setupJobs.host, owner.host),
+        eq(setupJobs.session, owner.session),
+        eq(setupJobs.claim, owner.claim),
+        eq(setupJobs.status, 'active'),
+        sql`${setupJobs.claimUntil}>now()`,
+      ),
+    )
+    .for('update')
+  if (!host || !job) throw new SetupConflictError('setup authority is unavailable')
+  return { host, job }
+}
+export async function progressSetup(body: SetupProgressBody) {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, body.host)
+    const { job } = await ownedSetup(tx, body)
+    if (job.cancelRequested) return false
+    await tx
+      .update(setupJobs)
+      .set({ stage: body.stage, updatedAt: sql`now()` })
+      .where(eq(setupJobs.id, job.id))
+    return true
+  })
+}
+export async function reserveSetup(body: SetupReserveBody) {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, body.host)
+    const { job } = await ownedSetup(tx, body)
+    if (job.cancelRequested) throw new SetupConflictError('setup cancelled')
+    if (
+      job.reservedUdid &&
+      (job.reservedUdid !== body.udid || job.reservedPort !== body.systemPort)
+    )
+      throw new SetupConflictError('setup already has a different reservation')
+    const valid =
+      job.target.platform === 'ios'
+        ? body.udid === job.target.identifier
+        : /^emulator-\d+$/.test(body.udid)
+    if (!valid) throw new SetupConflictError('device identity does not match the selected target')
+    const [phone] = await tx
+      .select()
+      .from(devices)
+      .where(and(eq(devices.host, body.host), eq(devices.udid, body.udid)))
+      .for('no key update')
+    if (phone?.virtualKey && phone.virtualKey !== job.targetKey)
+      throw new SetupConflictError(
+        'device ID is associated with another virtual target; reconcile its registration',
+      )
+    if (phone && phone.name !== job.deviceName)
+      throw new SetupConflictError('device ID belongs to another registration; refresh discovery')
+    if (phone && (await deviceBusy(tx, phone.name))) throw new SetupConflictError('device is busy')
+    await checkDevicePorts(tx, body.host, body.systemPort, job.target.platform, phone?.name, job.id)
+    await tx
+      .update(setupJobs)
+      .set({ reservedUdid: body.udid, reservedPort: body.systemPort, updatedAt: sql`now()` })
+      .where(eq(setupJobs.id, job.id))
+  })
+}
+export async function finishSetup(body: SetupFinishBody) {
+  return db.transaction(async (tx) => {
+    await lockDeviceHost(tx, body.host)
+    const { job, host } = await ownedSetup(tx, body)
+    let deviceName = job.deviceName,
+      status = body.status,
+      reason = body.reason ?? null
+    if (status === 'succeeded') {
+      if (job.cancelRequested || !job.reservedUdid || !job.reservedPort || !body.version)
+        throw new SetupConflictError('setup is cancelled or lacks a verified reservation')
+      if (deviceName) {
+        const [phone] = await tx
+          .select()
+          .from(devices)
+          .where(eq(devices.name, deviceName))
+          .for('no key update')
+        if (
+          !phone ||
+          (phone.virtualKey && phone.virtualKey !== job.targetKey) ||
+          phone.host !== body.host ||
+          phone.udid !== job.reservedUdid ||
+          phone.platform !== job.target.platform ||
+          phone.appiumUrl !== host.appiumUrl ||
+          phone.systemPort !== job.reservedPort ||
+          (phone.platformVersion && phone.platformVersion !== body.version) ||
+          (await deviceBusy(tx, phone.name))
+        )
+          throw new SetupConflictError('existing registration changed or differs from setup')
+        await tx
+          .update(devices)
+          .set({
+            virtualKey: job.targetKey,
+            ...(!phone.platformVersion ? { platformVersion: body.version } : {}),
+          })
+          .where(eq(devices.name, phone.name))
+        reason = 'already_registered'
+      } else {
+        deviceName = `virtual-${job.id}`
+        await registerDeviceIn(
+          tx,
+          {
+            name: deviceName,
+            host: body.host,
+            platform: job.target.platform,
+            udid: job.reservedUdid,
+            appiumUrl: host.appiumUrl,
+            systemPort: job.reservedPort,
+            platformVersion: body.version,
+          },
+          'create',
+          job.id,
+        )
+        await tx
+          .update(devices)
+          .set({ virtualKey: job.targetKey })
+          .where(eq(devices.name, deviceName))
+      }
+    }
+    await tx
+      .update(setupJobs)
+      .set({
+        status: body.stopped ? status : 'interrupted',
+        stage: 'done',
+        reason: body.stopped ? reason : 'command_unconfirmed',
+        deviceName,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(setupJobs.id, job.id))
+    notifyWork()
+  })
+}
+export async function cancelSetup(id: number) {
+  return db.transaction(async (tx) => {
+    const [first] = await tx
+      .select({ host: setupJobs.host })
+      .from(setupJobs)
+      .where(eq(setupJobs.id, id))
+    if (!first) return false
+    await lockDeviceHost(tx, first.host)
+    const [job] = await tx.select().from(setupJobs).where(eq(setupJobs.id, id)).for('update')
+    if (!job || !['queued', 'active'].includes(job.status)) return false
+    await tx
+      .update(setupJobs)
+      .set(
+        job.status === 'queued'
+          ? { status: 'cancelled', stage: 'done', reason: 'cancelled', updatedAt: sql`now()` }
+          : { cancelRequested: true, updatedAt: sql`now()` },
+      )
+      .where(eq(setupJobs.id, id))
+    return true
+  })
+}
+export async function resolveSetup(id: number) {
+  return db.transaction(async (tx) => {
+    const [first] = await tx
+      .select({ host: setupJobs.host })
+      .from(setupJobs)
+      .where(eq(setupJobs.id, id))
+    if (!first) throw new SetupConflictError('setup not found')
+    await lockDeviceHost(tx, first.host)
+    const [job] = await tx
+      .select({ status: setupState })
+      .from(setupJobs)
+      .where(eq(setupJobs.id, id))
+      .for('update')
+    if (job?.status !== 'interrupted')
+      throw new SetupConflictError('only an interrupted setup can be confirmed stopped')
+    await tx
+      .update(setupJobs)
+      .set({
+        status: 'cancelled',
+        stage: 'done',
+        reason: 'operator_resolved',
+        claim: null,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(setupJobs.id, id))
+    notifyWork()
+  })
+}
+export async function releaseSetupHost(owner: SetupOwner) {
+  await db.transaction(async (tx) => {
+    await lockDeviceHost(tx, owner.host)
+    const [active] = await tx
+      .select({ id: setupJobs.id })
+      .from(setupJobs)
+      .where(
+        and(
+          eq(setupJobs.host, owner.host),
+          eq(setupJobs.session, owner.session),
+          eq(setupJobs.status, 'active'),
+        ),
+      )
+      .limit(1)
+    if (active) throw new SetupConflictError('setup still active')
+    await tx
+      .update(runnerHosts)
+      .set({ lastSeenAt: sql`now()-interval '61 seconds'` })
+      .where(and(eq(runnerHosts.name, owner.host), eq(runnerHosts.session, owner.session)))
+  })
+}
+export async function expireSetups() {
+  if (process.uptime() < SETUP_CONTACT_SECONDS) return
+  await db
+    .update(setupJobs)
+    .set({ status: 'failed', stage: 'done', reason: 'runner_offline', updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(setupJobs.status, 'queued'),
+        lt(setupJobs.createdAt, sql`now()-interval '120 seconds'`),
+      ),
+    )
+  await db
+    .update(setupJobs)
+    .set({ status: 'interrupted', reason: 'owner_lost', updatedAt: sql`now()` })
+    .where(and(eq(setupJobs.status, 'active'), lt(setupJobs.claimUntil, sql`now()`)))
+}
+export async function deleteOldSetups() {
+  for (;;) {
+    const old = await db
+      .select({ id: setupJobs.id })
+      .from(setupJobs)
+      .where(
+        and(
+          sql`${setupJobs.status} IN ('succeeded','failed','cancelled')`,
+          lt(setupJobs.updatedAt, sql`now()-${config.ARTIFACT_DAYS}*interval '1 day'`),
+        ),
+      )
+      .orderBy(setupJobs.id)
+      .limit(1000)
+    if (!old.length) return
+    await db.delete(setupJobs).where(
+      and(
+        inArray(
+          setupJobs.id,
+          old.map((j) => j.id),
+        ),
+        sql`${setupJobs.status} IN ('succeeded','failed','cancelled')`,
+      ),
+    )
+    if (old.length < 1000) return
+  }
 }
