@@ -12,6 +12,7 @@ const Env = z.object({
   RUNNER_TOKEN: z.string().min(16),
   TRIGGER_TOKEN: z.string().min(16),
   DASHBOARD_PASSWORD: z.string().min(16), // basic auth for /dashboard, any user name
+  CLI_TOKEN: optional(z.string().min(16)), // dashboard API only; no runner/result authority
   PORT: z.coerce.number().int().default(3000),
   LEASE_SECONDS: z.coerce.number().int().positive().default(120),
   STUCK_RUN_MINUTES: z.coerce.number().int().positive().default(15), // see expireRuns()
@@ -47,11 +48,20 @@ const Env = z.object({
   TELEGRAM_API_URL: z.url().default('https://api.telegram.org'), // or a self-hosted Bot API
 })
 
-const parsed = Env.refine((env) => env.DEVICE_PAUSE_SECONDS < env.STUCK_RUN_MINUTES * 60, {
-  message:
-    'DEVICE_PAUSE_SECONDS must be shorter than STUCK_RUN_MINUTES, so paused phones can recover',
-  path: ['DEVICE_PAUSE_SECONDS'],
-})
+const parsed = Env.refine(
+  (env) =>
+    !env.CLI_TOKEN ||
+    ![env.RUNNER_TOKEN, env.TRIGGER_TOKEN, env.DASHBOARD_PASSWORD].includes(env.CLI_TOKEN),
+  {
+    message: 'CLI_TOKEN must differ from runner/trigger tokens and the dashboard password',
+    path: ['CLI_TOKEN'],
+  },
+)
+  .refine((env) => env.DEVICE_PAUSE_SECONDS < env.STUCK_RUN_MINUTES * 60, {
+    message:
+      'DEVICE_PAUSE_SECONDS must be shorter than STUCK_RUN_MINUTES, so paused phones can recover',
+    path: ['DEVICE_PAUSE_SECONDS'],
+  })
   .refine((env) => !env.SLACK_BOT_TOKEN === !env.SLACK_CHANNEL, {
     message: 'set both SLACK_BOT_TOKEN and SLACK_CHANNEL, or neither',
     path: ['SLACK_CHANNEL'],

@@ -7,6 +7,10 @@ with one phone on a long test while the others wait.
 
 Status: in development.
 
+The repository includes a [TypeScript CLI](cli/README.md) for humans and external agents.
+Run `pnpm --silent nowait capabilities --json` to discover commands and request schemas.
+It uses the same server operations as the dashboard, with structured results and a dedicated CLI token.
+
 ## Inspiration
 
 Nowait QA was inspired by the MUSINSA Automation QE team's article

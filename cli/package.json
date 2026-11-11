@@ -1,0 +1,16 @@
+{
+  "name": "@nowait/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nowait": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@nowait/shared": "workspace:*",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  }
+}

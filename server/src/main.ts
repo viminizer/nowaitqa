@@ -58,7 +58,11 @@ app.addHook('onRequest', async (req, reply) => {
   // Decided by the matched route, not the raw URL (/%64ashboard matches the same route). An unknown
   // /dashboard URL still asks for the password, then answers 404.
   if ((route ?? req.url).startsWith('/dashboard')) {
-    if (!isDashboardPassword(given)) {
+    const cli =
+      route?.startsWith('/dashboard/api/') &&
+      config.CLI_TOKEN &&
+      matches(given, `Bearer ${config.CLI_TOKEN}`)
+    if (!cli && !isDashboardPassword(given)) {
       return reply
         .code(401)
         .header('www-authenticate', 'Basic realm="nowait-qa"')
