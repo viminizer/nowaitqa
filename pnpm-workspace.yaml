@@ -4,6 +4,7 @@ packages:
   - runner
   - sdk
   - web
+  - cli
   - examples/scenarios
 
 allowBuilds:

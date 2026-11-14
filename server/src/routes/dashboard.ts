@@ -269,7 +269,11 @@ export const dashboardRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req, reply) => {
       req.log.info(`dashboard: start a ${req.body.platform} run`)
-      return started(createRun({ ...req.body, trigger: 'dashboard' }), 'run', reply)
+      // Bearer dashboard API callers have already passed the CLI-token check in main.ts.
+      const trigger = req.headers.authorization?.startsWith('Bearer ')
+        ? req.body.trigger
+        : 'dashboard'
+      return started(createRun({ ...req.body, trigger }), 'run', reply)
     },
   )
 
